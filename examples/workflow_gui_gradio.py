@@ -1,0 +1,158 @@
+"""
+Gradio GUI for multi-step text-to-image/image-editing workflows with real-time resource monitoring.
+- Workflow selection, parameter input, execution, output/log display
+- Live CPU/GPU/RAM/Temp/time usage panel
+
+Required: pip install gradio psutil GPUtil pynvml matplotlib diffusers torch pillow
+"""
+import gradio as gr
+import psutil
+import GPUtil
+import pynvml
+import time
+import matplotlib.pyplot as plt
+from threading import Thread
+from queue import Queue
+from PIL import Image
+import os
+
+# Initialize NVML for GPU temp
+try:
+    pynvml.nvmlInit()
+except Exception:
+    pass
+
+# Dummy workflow registry (replace with dynamic discovery if needed)
+WORKFLOWS = {
+    "Text-to-Image": {
+        "params": [
+            {"name": "prompt", "type": "text", "label": "Prompt", "value": "A futuristic cityscape at sunset with flying cars"},
+            {"name": "steps", "type": "slider", "label": "Steps", "minimum": 10, "maximum": 100, "value": 30},
+        ],
+        "run": lambda params, log: (Image.new("RGB", (512, 512), color="blue"), "Simulated image output.")
+    },
+    "Image Editing Chain": {
+        "params": [
+            {"name": "input_image", "type": "image", "label": "Input Image"},
+            {"name": "edit_type", "type": "dropdown", "label": "Edit Type", "choices": ["bbox_swap", "segment_swap", "object_removal", "detailer"]},
+        ],
+        "run": lambda params, log: (Image.new("RGB", (512, 512), color="green"), f"Simulated edit: {params['edit_type']}")
+    }
+}
+
+# Resource monitor generator
+def resource_monitor_gen(duration=0):
+    start_time = time.time()
+    cpu_hist, ram_hist, gpu_hist, temp_hist, timestamps = [], [], [], [], []
+    while True:
+        cpu = psutil.cpu_percent()
+        ram = psutil.virtual_memory().percent
+        try:
+            gpus = GPUtil.getGPUs()
+            if gpus:
+                gpu = gpus[0].load * 100
+                handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+                temp = pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
+            else:
+                gpu = 0
+                temp = 0
+        except Exception:
+            gpu = 0
+            temp = 0
+        elapsed = time.time() - start_time
+        cpu_hist.append(cpu)
+        ram_hist.append(ram)
+        gpu_hist.append(gpu)
+        temp_hist.append(temp)
+        timestamps.append(elapsed)
+        # Plot
+        fig, ax = plt.subplots()
+        ax.plot(timestamps, cpu_hist, label="CPU %")
+        ax.plot(timestamps, ram_hist, label="RAM %")
+        ax.plot(timestamps, gpu_hist, label="GPU %")
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel("Usage (%)")
+        ax.legend()
+        plt.tight_layout()
+        stats_md = f"""
+        **CPU:** {cpu:.1f}%  
+        **RAM:** {ram:.1f}%  
+        **GPU:** {gpu:.1f}%  
+        **GPU Temp:** {temp}°C  
+        **Elapsed:** {elapsed:.1f}s
+        """
+        yield fig, stats_md
+        if duration and elapsed > duration:
+            break
+        time.sleep(1)
+
+# Workflow runner (runs in a thread, puts outputs/logs in a queue)
+def run_workflow_thread(workflow_name, params, q):
+    log = lambda msg: q.put(("log", msg))
+    wf = WORKFLOWS[workflow_name]
+    img, logmsg = wf["run"](params, log)
+    q.put(("output", img, logmsg))
+
+# Gradio app
+def gradio_app():
+    with gr.Blocks() as demo:
+        gr.Markdown("# Multi-Agent Workflow GUI with Resource Monitor")
+        with gr.Row():
+            with gr.Column(scale=2):
+                workflow_sel = gr.Dropdown(list(WORKFLOWS.keys()), label="Select Workflow", value=list(WORKFLOWS.keys())[0])
+                param_elems = {}
+                param_box = gr.Column()
+                run_btn = gr.Button("Run Workflow")
+                output_img = gr.Image(label="Output Image")
+                output_log = gr.Textbox(label="Logs/Output", lines=4)
+            with gr.Column(scale=1):
+                gr.Markdown("## Resource Usage (Live)")
+                res_plot = gr.Plot(label="Resource Usage Over Time", live=True)
+                res_stats = gr.Markdown(label="Current Stats", live=True)
+                res_btn = gr.Button("Start Resource Monitor")
+        # Dynamic parameter UI
+        def update_params(wf_name):
+            wf = WORKFLOWS[wf_name]
+            elems = []
+            for p in wf["params"]:
+                if p["type"] == "text":
+                    elems.append(gr.Textbox(label=p["label"], value=p.get("value", ""), interactive=True))
+                elif p["type"] == "slider":
+                    elems.append(gr.Slider(label=p["label"], minimum=p["minimum"], maximum=p["maximum"], value=p.get("value", 0), interactive=True))
+                elif p["type"] == "dropdown":
+                    elems.append(gr.Dropdown(label=p["label"], choices=p["choices"], value=p["choices"][0], interactive=True))
+                elif p["type"] == "image":
+                    elems.append(gr.Image(label=p["label"], interactive=True))
+            return elems
+        param_elems_list = update_params(list(WORKFLOWS.keys())[0])
+        param_box.children = param_elems_list
+        workflow_sel.change(lambda wf: update_params(wf), inputs=workflow_sel, outputs=param_box)
+        # Run workflow
+        def run_workflow(wf_name, *args):
+            wf = WORKFLOWS[wf_name]
+            params = {}
+            for i, p in enumerate(wf["params"]):
+                params[p["name"]] = args[i]
+            q = Queue()
+            t = Thread(target=run_workflow_thread, args=(wf_name, params, q))
+            t.start()
+            logs = ""
+            img = None
+            while t.is_alive() or not q.empty():
+                while not q.empty():
+                    item = q.get()
+                    if item[0] == "log":
+                        logs += str(item[1]) + "\n"
+                    elif item[0] == "output":
+                        img, logmsg = item[1], item[2]
+                        logs += str(logmsg) + "\n"
+                time.sleep(0.2)
+                yield img, logs
+            yield img, logs
+        run_btn.click(run_workflow, inputs=[workflow_sel]+param_box.children, outputs=[output_img, output_log])
+        # Resource monitor
+        res_btn.click(resource_monitor_gen, outputs=[res_plot, res_stats])
+    return demo
+
+if __name__ == "__main__":
+    gradio_app().launch()

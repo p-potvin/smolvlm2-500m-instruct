@@ -17,6 +17,24 @@ from smolvlm2_wrapper.video.processor import VideoProcessor
 from smolvlm2_wrapper.text.processor import TextProcessor
 from smolvlm2_wrapper.workflows.base import Workflow
 from smolvlm2_wrapper.utils.device import DeviceManager
+from smolvlm2_wrapper.context_schema import ImageContext, VideoContext, TextContext, WorkflowContext
+from smolvlm2_wrapper.agent_registry import AgentRegistry
+from smolvlm2_wrapper.event_bus import EventBus
+
+# Register core agents for discovery
+AgentRegistry.register(
+    'text', TextProcessor, 'Text generation, editing, VQA, prompt engineering', TextContext
+)
+AgentRegistry.register(
+    'image', ImageProcessor, 'Image generation, editing, masking, inpainting', ImageContext
+)
+AgentRegistry.register(
+    'video', VideoProcessor, 'Video generation, editing, analysis', VideoContext
+)
+AgentRegistry.register(
+    'workflow', Workflow, 'Workflow parsing, export, validation', WorkflowContext
+)
+
 
 __version__ = "0.1.0"
 

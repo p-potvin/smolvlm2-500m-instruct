@@ -140,6 +140,7 @@ class Workflow:
         logger.info("[%s] Starting (%d steps)", self.name, len(self._steps))
         total_start = time.perf_counter()
 
+        from smolvlm2_wrapper.compliance import check_compliance
         for step in self._steps:
             t0 = time.perf_counter()
             logger.debug("[%s] Running step: %s", self.name, step.name)
@@ -150,6 +151,8 @@ class Workflow:
                         f"Step {step.name!r} returned None.  "
                         "Each step must return the updated context dict."
                     )
+                # Compliance check after each step
+                check_compliance(ctx)
             except Exception as exc:
                 raise RuntimeError(
                     f"[{self.name}] Step {step.name!r} failed: {exc}"
