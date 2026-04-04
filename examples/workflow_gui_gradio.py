@@ -175,4 +175,9 @@ def gradio_app():
     return demo
 
 if __name__ == "__main__":
-    gradio_app().launch()
+    gradio_app().launch(
+        pwa=True,
+        favicon_path="icons/icon32.png",
+        show_error=True,
+        debug=True
+    )

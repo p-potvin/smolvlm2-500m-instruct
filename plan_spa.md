@@ -1,15 +1,6 @@
-# Agent Manifest
+# Advanced Workflow SPA/Web App Plan
 
-## Specialized AI Agents
-
-- **agent_text.md**: Text generation, editing, manipulation, prompt engineering, VQA, workflow creation, ComfyUI/Diffusion export.
-- **agent_image.md**: Image generation, editing, manipulation, masking, inpainting, workflow creation, ComfyUI/Diffusion export.
-- **agent_video.md**: Video generation, editing, manipulation, frame processing, video analysis, workflow creation, ComfyUI/Diffusion export.
-- **agent_workflow.md**: Workflow parsing, conversion, and export to ComfyUI/Diffusion formats.
-
-## Workflow Management SPA (Planned)
-
-A single-page application (SPA) for advanced workflow management, featuring:
+## Features
 - Browse workflows by category
 - Sort/filter workflows
 - Pin workflows to top
@@ -18,13 +9,13 @@ A single-page application (SPA) for advanced workflow management, featuring:
 - Backup/restore all workflows
 - Option to run locally or on NVIDIA NIM VM
 
-### Architectural Notes
+## Architecture
 - **Frontend**: React SPA (Material UI/Ant Design)
 - **Backend**: FastAPI/Flask (Python), REST API for workflows, favorites, backup, NIM integration
-- **Storage**: JSON/YAML files in `examples/` or DB
-- **Remote Execution**: NIM VM API endpoint
+- **Workflow storage**: JSON/YAML files in `examples/` or DB
+- **NIM VM**: API endpoint for remote execution
 
-### API Endpoints (Planned)
+## API Endpoints (Planned)
 - `GET /workflows` — List workflows (with category, sort, filter)
 - `POST /workflows` — Create/import workflow
 - `PUT /workflows/{id}` — Update workflow
@@ -36,13 +27,13 @@ A single-page application (SPA) for advanced workflow management, featuring:
 - `POST /workflows/favorite` — Add/remove favorite
 - `POST /workflows/run` — Run workflow (local or NIM VM)
 
-### UI/UX Notes
+## UI/UX Notes
 - Category sidebar, sortable/filterable workflow list
 - Pin/favorite toggles, batch actions (export, backup)
 - Modal dialogs for create/import/export/restore
 - Toggle for local vs. NIM VM execution
 
-### Implementation Steps
+## Implementation Steps
 1. Define API endpoints and backend models
 2. Design frontend UI/UX (wireframes, components)
 3. Implement backend workflow management
@@ -52,12 +43,10 @@ A single-page application (SPA) for advanced workflow management, featuring:
 7. Testing (unit, integration, E2E)
 8. Documentation and deployment
 
-### Dependencies/Design Considerations
+## Dependencies/Design Considerations
 - React, Material UI/Ant Design, Axios (frontend)
 - FastAPI/Flask, Pydantic, SQLAlchemy or file I/O (backend)
 - Secure API (auth, validation)
 - NIM VM API integration (auth, error handling)
 - Data migration for existing workflows
 - Responsive design, accessibility
-
-All agents follow VaultWares security, privacy, and style guidelines as described in .github/INSTRUCTIONS.md and .github/STYLE.md.

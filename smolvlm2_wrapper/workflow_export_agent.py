@@ -7,9 +7,17 @@ from smolvlm2_wrapper.shared_context import SharedContext
 from smolvlm2_wrapper.validation_utils import ValidationUtils
 from smolvlm2_wrapper.event_bus import EventBus
 
+import random
+import string
+from smolvlm2_wrapper.redis_coordination import RedisCoordinator
+
 class WorkflowExportAgent:
     def __init__(self, shared_context: SharedContext):
         self.shared_context = shared_context
+        # Generate unique agent ID: workflow-XXXX
+        agent_id = 'workflow-' + ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
+        self._coordinator = RedisCoordinator(agent_id=agent_id)
+        # Example: self._coordinator.publish('STATUS', 'init', {'msg': 'WorkflowExportAgent ready'})
 
     def export_to_comfyui(self, python_workflow: Dict[str, Any]) -> Dict[str, Any]:
         # Validate input (assume a schema exists elsewhere)

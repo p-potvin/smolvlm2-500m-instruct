@@ -33,6 +33,10 @@ from smolvlm2_wrapper.text.prompts import (
 logger = logging.getLogger(__name__)
 
 
+import random
+import string
+from smolvlm2_wrapper.redis_coordination import RedisCoordinator
+
 class TextProcessor:
     """Fluent text-generation interface backed by any model wrapper.
 
@@ -45,6 +49,10 @@ class TextProcessor:
 
     def __init__(self, model=None) -> None:
         self._model = model
+        # Generate unique agent ID: text-XXXX
+        agent_id = 'text-' + ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
+        self._coordinator = RedisCoordinator(agent_id=agent_id)
+        # Example: self._coordinator.publish('STATUS', 'init', {'msg': 'TextProcessor ready'})
 
     def _require_model(self) -> None:
         if self._model is None:

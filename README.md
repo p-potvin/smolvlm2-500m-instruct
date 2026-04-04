@@ -1,8 +1,58 @@
-# smolvlm2-wrapper
+# smolvlm2-500m-instruct: Multi-Agent Workflow Platform
 
-A flexible, well-documented multi-modal manipulation toolkit centred on
-**SmolVLM2-500M-Video-Instruct** – optimised for low-power devices and
-real-time applications.
+
+## Overview
+A modular platform for text, image, and video generation/editing using AI agents, with workflow orchestration, compliance, and a Gradio-based GUI.
+
+## Features
+- Specialized agents for text, image, video
+- Workflow creation, editing, and export (ComfyUI, Diffusers)
+- Gradio GUI with live resource monitoring
+- PyInstaller packaging for local deployment
+
+## Quickstart
+1. Install dependencies:
+   ```
+   pip install -r requirements.txt
+   ```
+2. Run the GUI:
+   ```
+   python examples/workflow_gui_gradio.py
+   ```
+3. Build executable (Windows):
+   ```
+   powershell ./build_gradio_app.ps1
+   ```
+4. Open http://127.0.0.1:7860 in your browser.
+
+## Modules
+- `smolvlm2_wrapper/agent_text.py` — Text agent logic
+- `smolvlm2_wrapper/agent_image.py` — Image agent logic
+- `smolvlm2_wrapper/agent_video.py` — Video agent logic
+- `smolvlm2_wrapper/agent_workflow.py` — Workflow orchestration
+- `smolvlm2_wrapper/context_schema.py` — Shared context definitions
+- `smolvlm2_wrapper/compliance.py` — Compliance hooks
+- `smolvlm2_wrapper/central_error_logger.py` — Error/event logging
+- `examples/workflow_gui_gradio.py` — Main GUI app
+
+## Example Usage
+- **Text-to-Image:**
+  1. Select "Text-to-Image" workflow in the GUI
+  2. Enter a prompt and steps
+  3. Click "Run Workflow" to generate an image
+- **Image Editing:**
+  1. Select "Image Editing Chain"
+  2. Upload an image and choose an edit type
+  3. Click "Run Workflow" to process
+
+## Troubleshooting
+- If the GUI does not appear, open http://127.0.0.1:7860 manually
+- For build issues, use the provided PowerShell script to clean and rebuild
+- Check `gradio_error.log` for runtime errors
+
+## Contributing
+Pull requests and issues are welcome!
+
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐

@@ -28,11 +28,12 @@ exe = EXE(
     [],
     exclude_binaries=True,
     name='workflow_gui_gradio',
-    debug=False,
+    debug=True,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
     oneFile=True,
+    pwa=True,
     console=True,
 )
 coll = COLLECT(

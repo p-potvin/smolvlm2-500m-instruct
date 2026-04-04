@@ -35,6 +35,10 @@ from smolvlm2_wrapper.video import manipulation, utils as vid_utils
 logger = logging.getLogger(__name__)
 
 
+import random
+import string
+from smolvlm2_wrapper.redis_coordination import RedisCoordinator
+
 class VideoProcessor:
     """Chainable video processing pipeline with optional model integration.
 
@@ -49,6 +53,10 @@ class VideoProcessor:
         self._model = model
         self._frames: List[Image.Image] = []
         self._fps: float = 24.0
+        # Generate unique agent ID: video-XXXX
+        agent_id = 'video-' + ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
+        self._coordinator = RedisCoordinator(agent_id=agent_id)
+        # Example: self._coordinator.publish('STATUS', 'init', {'msg': 'VideoProcessor ready'})
 
     # ------------------------------------------------------------------ #
     # I/O                                                                  #

@@ -32,6 +32,8 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
+    oneFile=True,
+    pwa=True,
     console=True,
 )
 coll = COLLECT(

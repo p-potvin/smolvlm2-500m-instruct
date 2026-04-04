@@ -37,6 +37,10 @@ from smolvlm2_wrapper.image import manipulation, mask as mask_mod, inpaint as in
 logger = logging.getLogger(__name__)
 
 
+import random
+import string
+from smolvlm2_wrapper.redis_coordination import RedisCoordinator
+
 class ImageProcessor:
     """Chainable image processing pipeline with optional model integration.
 
@@ -51,6 +55,10 @@ class ImageProcessor:
     def __init__(self, model=None) -> None:
         self._model = model
         self._image: Optional[Image.Image] = None
+        # Generate unique agent ID: image-XXXX
+        agent_id = 'image-' + ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
+        self._coordinator = RedisCoordinator(agent_id=agent_id)
+        # Example: self._coordinator.publish('STATUS', 'init', {'msg': 'ImageProcessor ready'})
 
     # ------------------------------------------------------------------ #
     # state management                                                     #
