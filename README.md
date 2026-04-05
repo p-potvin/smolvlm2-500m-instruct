@@ -1,4 +1,4 @@
-# smolvlm2-500m-instruct: Multi-Agent Workflow Platform
+# vaultwares-pipelines: Multi-Agent Workflow Platform
 
 
 ## Overview
@@ -100,8 +100,8 @@ Pull requests and issues are welcome!
 
 ```bash
 # 1. clone
-git clone https://github.com/p-potvin/smolvlm2-500m-instruct
-cd smolvlm2-500m-instruct
+git clone https://github.com/p-potvin/vaultwares-pipelines
+cd vaultwares-pipelines
 
 # 2. install (editable)
 pip install -e ".[dev]"

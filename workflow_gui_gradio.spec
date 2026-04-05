@@ -12,7 +12,7 @@ a = Analysis([
     'examples/workflow_gui_gradio.py'],
     pathex=[],
     binaries=[],
-    datas=[('C:\\Users\\Administrator\\Desktop\\Github Repos\\Projects\\smolvlm2-500m-instruct\\.venv\\Lib\\site-packages\\safehttpx\\version.txt', 'safehttpx')],
+    datas=[('C:\\Users\\Administrator\\Desktop\\Github Repos\\Projects\\vaultwares-pipelines\\.venv\\Lib\\site-packages\\safehttpx\\version.txt', 'safehttpx')],
     hiddenimports=hiddenimports,
     hookspath=[],
     runtime_hooks=[],
