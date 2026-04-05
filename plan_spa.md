@@ -38,27 +38,29 @@
 
 ### 2. Frontend Implementation (React, Vite, Redux, Tailwind, zod)
 - 2.1. UI/UX Design
-  - Wireframes for main views: category sidebar, workflow list, modals (create/import/export/restore)
-  - Design system: Tailwind setup, component library (Material UI/Ant Design)
+  - [x] Review VaultWares guidelines/standards
+  - [x] Review current frontend structure (React, Vite, Tailwind, WorkflowList)
+  - [ ] Wireframes for main views: category sidebar, workflow list, modals (create/import/export/restore)
+  - [ ] Design system: Tailwind setup, component library (Material UI/Ant Design)
 - 2.2. State Management
-  - Redux store for workflows, categories, UI state (pins, favorites, filters)
-  - zod schemas for client-side validation
+  - [ ] Redux store for workflows, categories, UI state (pins, favorites, filters)
+  - [ ] zod schemas for client-side validation
 - 2.3. Core Components
-  - Category sidebar
-  - Workflow list (sortable, filterable)
-  - Pin/favorite toggles
-  - Batch actions (export, backup)
-  - Modals for create/import/export/restore
-  - Toggle for local vs. NIM VM execution
+  - [ ] Category sidebar
+  - [ ] Workflow list (sortable, filterable)
+  - [ ] Pin/favorite toggles
+  - [ ] Batch actions (export, backup)
+  - [ ] Modals for create/import/export/restore
+  - [ ] Toggle for local vs. NIM VM execution
 - 2.4. API Integration
-  - Axios/fetch for all backend endpoints
-  - Error handling, loading states
+  - [ ] Axios/fetch for all backend endpoints
+  - [ ] Error handling, loading states
 - 2.5. Responsive Design & Accessibility
-  - Ensure mobile/tablet support
-  - ARIA roles, keyboard navigation
+  - [ ] Ensure mobile/tablet support
+  - [ ] ARIA roles, keyboard navigation
 - 2.6. Testing (Frontend)
-  - Unit tests (components, Redux)
-  - E2E tests (Cypress/Playwright)
+  - [ ] Unit tests (components, Redux)
+  - [ ] E2E tests (Cypress/Playwright)
 
 **Dependencies:** API endpoints must be available for integration; wireframes/components should be reviewed by UI/UX.
 
