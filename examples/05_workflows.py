@@ -59,8 +59,8 @@ def run(image_path: str, output_dir: str = "/tmp/smolvlm2_demo/workflows") -> No
     # ── 3. PromptGenerationWorkflow (with model if available) ─────────────────
     print("\n── PromptGenerationWorkflow ─────────────────────────────────────")
     try:
-        from smolvlm2_wrapper import SmolVLM2Wrapper
-        model = SmolVLM2Wrapper()
+        from smolvlm2_wrapper import GenericTextModelWrapper
+        model = GenericTextModelWrapper()
         wf3 = PromptGenerationWorkflow(model=model)
         result3 = wf3.run({"image_path": image_path})
         print(f"  Raw caption : {result3.get('raw_caption', '')[:120]}")

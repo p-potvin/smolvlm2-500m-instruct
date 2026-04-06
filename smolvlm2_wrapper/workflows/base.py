@@ -22,9 +22,14 @@ Usage::
 from __future__ import annotations
 
 import logging
+import random
+import string
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
+
+from extrovert_agent import ExtrovertAgent
+from enums import AgentStatus
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +64,7 @@ class Step:
     description: str = ""
 
 
-class Workflow:
+class Workflow(ExtrovertAgent):
     """An ordered, composable pipeline of :class:`Step` objects.
 
     Parameters
@@ -81,8 +86,13 @@ class Workflow:
         name: str = "workflow",
         steps: Optional[List[Step]] = None,
     ) -> None:
+        # Generate unique agent ID: workflow-XXXX
+        agent_id = 'workflow-' + ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
+        super().__init__(agent_id=agent_id)
+        
         self.name = name
         self._steps: List[Step] = list(steps or [])
+        self.start()
 
     # ------------------------------------------------------------------ #
     # building                                                             #
@@ -113,31 +123,27 @@ class Workflow:
     # ------------------------------------------------------------------ #
 
     def run(self, context: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute all steps in order, passing context between them.
-
-        Parameters
-        ----------
-        context:
-            Initial context dictionary.  Keys/values depend on the pipeline.
-
-        Returns
-        -------
-        dict
-            Final context after all steps have run.
-
-        Raises
-        ------
-        RuntimeError
-            If any step raises an exception (the original exception is
-            chained).
-
-        Example::
-
-            result = wf.run({"image": pil_image, "model": model})
-            caption = result.get("caption")
-        """
+        """Execute all steps in order."""
+        self.update_status(AgentStatus.WORKING)
         ctx = dict(context)
         logger.info("[%s] Starting (%d steps)", self.name, len(self._steps))
+
+        for i, step in enumerate(self._steps, 1):
+            logger.info("  [%d/%d] Running %s...", i, len(self._steps), step.name)
+            self.coordinator.publish("STEP_START", step.name, {"workflow": self.name, "step_index": i})
+            start_t = time.time()
+            try:
+                ctx = step.fn(ctx)
+            except Exception as e:
+                self.update_status(AgentStatus.WAITING_FOR_INPUT)
+                raise RuntimeError(f"Step '{step.name}' failed: {e}") from e
+            
+            elapsed = time.time() - start_t
+            self.coordinator.publish("STEP_COMPLETE", step.name, {"workflow": self.name, "duration": elapsed})
+
+        logger.info("[%s] Done.", self.name)
+        self.update_status(AgentStatus.WAITING_FOR_INPUT)
+        return ctx
         total_start = time.perf_counter()
 
         from smolvlm2_wrapper.compliance import check_compliance

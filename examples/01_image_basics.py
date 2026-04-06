@@ -69,8 +69,8 @@ def run(image_path: str, output_dir: str = "/tmp/smolvlm2_demo") -> None:
 
     # ── 8. (optional) model captioning ───────────────────────────────────────
     try:
-        from smolvlm2_wrapper import SmolVLM2Wrapper
-        model = SmolVLM2Wrapper()
+        from smolvlm2_wrapper import GenericTextModelWrapper
+        model = GenericTextModelWrapper()
         proc2 = ImageProcessor(model=model)
         proc2.load(image_path)
         for style in ("brief", "detailed", "tags"):

@@ -7,8 +7,11 @@ export function WorkflowList({ workflows }) {
       <ul className="space-y-2">
         {workflows && workflows.length > 0 ? (
           workflows.map((wf, i) => (
-            <li key={i} className="bg-white dark:bg-gray-800 rounded shadow p-3 border border-gray-200 dark:border-gray-700">
+            <li key={wf.id || i} className="bg-white dark:bg-gray-800 rounded shadow p-3 border border-gray-200 dark:border-gray-700">
               <span className="font-medium text-gray-900 dark:text-gray-100">{wf.name}</span>
+              {wf.description && (
+                <div className="text-gray-600 dark:text-gray-300 text-sm mt-1">{wf.description}</div>
+              )}
             </li>
           ))
         ) : (

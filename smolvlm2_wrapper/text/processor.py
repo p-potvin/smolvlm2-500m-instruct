@@ -7,7 +7,7 @@ Usage::
     from smolvlm2_wrapper.text.processor import TextProcessor
     from PIL import Image
 
-    model = SmolVLM2Wrapper()
+    model = GenericTextModelWrapper()
     tp = TextProcessor(model=model)
 
     caption = tp.caption(Image.open("photo.jpg"), style="detailed")
@@ -18,6 +18,8 @@ Usage::
 from __future__ import annotations
 
 import logging
+import random
+import string
 from typing import Any, List, Optional
 
 from PIL import Image
@@ -30,34 +32,34 @@ from smolvlm2_wrapper.text.prompts import (
     STYLE_PROMPTS,
 )
 
+from extrovert_agent import ExtrovertAgent
+from enums import AgentStatus
+
 logger = logging.getLogger(__name__)
 
 
-import random
-import string
-from smolvlm2_wrapper.redis_coordination import RedisCoordinator
-
-class TextProcessor:
+class TextProcessor(ExtrovertAgent):
     """Fluent text-generation interface backed by any model wrapper.
 
     Parameters
     ----------
     model:
         Any object with a compatible ``generate(prompt, images, videos)``
-        method (e.g. :class:`~smolvlm2_wrapper.core.smolvlm2.SmolVLM2Wrapper`).
+        method (e.g. :class:`~smolvlm2_wrapper.core.smolvlm2.GenericTextModelWrapper`).
     """
 
     def __init__(self, model=None) -> None:
-        self._model = model
         # Generate unique agent ID: text-XXXX
         agent_id = 'text-' + ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
-        self._coordinator = RedisCoordinator(agent_id=agent_id)
-        # Example: self._coordinator.publish('STATUS', 'init', {'msg': 'TextProcessor ready'})
+        super().__init__(agent_id=agent_id)
+        
+        self._model = model
+        self.start()
 
     def _require_model(self) -> None:
         if self._model is None:
             raise RuntimeError(
-                "No model attached.  Pass model=SmolVLM2Wrapper() to TextProcessor."
+                "No model attached.  Pass model=GenericTextModelWrapper() to TextProcessor."
             )
 
     # ------------------------------------------------------------------ #
@@ -70,28 +72,13 @@ class TextProcessor:
         style: str = "detailed",
         **kwargs: Any,
     ) -> str:
-        """Generate a caption for *image*.
-
-        Parameters
-        ----------
-        image:
-            PIL image.
-        style:
-            One of ``"brief"``, ``"detailed"``, ``"tags"``, ``"cinematic"``,
-            ``"sd_prompt"``.
-
-        Returns
-        -------
-        str
-            Caption text.
-
-        Example::
-
-            caption = tp.caption(Image.open("photo.jpg"), style="sd_prompt")
-        """
+        """Generate a caption for *image*."""
+        self.update_status(AgentStatus.WORKING)
         self._require_model()
         prompt = build_caption_prompt(style)
-        return self._model.generate(prompt, images=[image], **kwargs)
+        res = self._model.generate(prompt, images=[image], **kwargs)
+        self.update_status(AgentStatus.WAITING_FOR_INPUT)
+        return res
 
     # ------------------------------------------------------------------ #
     # VQA                                                                  #
@@ -103,27 +90,13 @@ class TextProcessor:
         images: Optional[List[Image.Image]] = None,
         **kwargs: Any,
     ) -> str:
-        """Visual question answering.
-
-        Parameters
-        ----------
-        question:
-            Natural-language question.
-        images:
-            Reference images.
-
-        Returns
-        -------
-        str
-            Model answer.
-
-        Example::
-
-            answer = tp.vqa("What colour is the car?", images=[Image.open("car.jpg")])
-        """
+        """Visual question answering."""
+        self.update_status(AgentStatus.WORKING)
         self._require_model()
         prompt = build_vqa_prompt(question)
-        return self._model.generate(prompt, images=images, **kwargs)
+        res = self._model.generate(prompt, images=images, **kwargs)
+        self.update_status(AgentStatus.WAITING_FOR_INPUT)
+        return res
 
     # ------------------------------------------------------------------ #
     # prompt enhancement                                                   #
@@ -135,88 +108,32 @@ class TextProcessor:
         image: Optional[Image.Image] = None,
         **kwargs: Any,
     ) -> str:
-        """Rewrite and enrich *prompt* to be more descriptive.
-
-        Parameters
-        ----------
-        prompt:
-            Original (possibly terse) prompt.
-        image:
-            Optional reference image to ground the enhancement.
-
-        Returns
-        -------
-        str
-            Enhanced prompt.
-
-        Example::
-
-            better = tp.enhance_prompt("a dog running in the park")
-        """
+        """Rewrite and enrich *prompt* to be more descriptive."""
+        self.update_status(AgentStatus.WORKING)
         self._require_model()
-        instruction = build_enhancement_prompt(prompt)
-        images = [image] if image is not None else None
-        return self._model.generate(instruction, images=images, **kwargs)
-
-    # ------------------------------------------------------------------ #
-    # video description                                                    #
-    # ------------------------------------------------------------------ #
-
+        full_prompt = build_enhancement_prompt(prompt)
+        res = self._model.generate(full_prompt, images=[image] if image else None, **kwargs)
+        self.update_status(AgentStatus.WAITING_FOR_INPUT)
+        return res
     def describe_video(
         self,
         frames: List[Image.Image],
         focus: str = "action",
         **kwargs: Any,
     ) -> str:
-        """Describe a video clip given a list of frames.
-
-        Parameters
-        ----------
-        frames:
-            Ordered list of PIL frames.
-        focus:
-            ``"action"``, ``"scene"``, ``"emotion"``, or ``"summary"``.
-
-        Returns
-        -------
-        str
-            Video description.
-
-        Example::
-
-            desc = tp.describe_video(frames, focus="summary")
-        """
+        """Describe a video clip given a list of frames."""
+        self.update_status(AgentStatus.WORKING)
         self._require_model()
-        prompt = build_video_description_prompt(focus)
-        return self._model.generate(prompt, videos=[frames], **kwargs)
-
-    # ------------------------------------------------------------------ #
-    # batch operations                                                     #
-    # ------------------------------------------------------------------ #
-
+        full_prompt = build_video_description_prompt(focus)
+        res = self._model.generate(full_prompt, images=frames, **kwargs)
+        self.update_status(AgentStatus.WAITING_FOR_INPUT)
+        return res
     def batch_caption(
         self,
         images: List[Image.Image],
         style: str = "brief",
     ) -> List[str]:
-        """Caption multiple images in sequence.
-
-        Parameters
-        ----------
-        images:
-            List of PIL images.
-        style:
-            Caption style.
-
-        Returns
-        -------
-        List[str]
-            One caption per image.
-
-        Example::
-
-            captions = tp.batch_caption([img1, img2, img3], style="tags")
-        """
+        """Caption multiple images in sequence."""
         return [self.caption(img, style=style) for img in images]
 
     def batch_vqa(
@@ -225,10 +142,7 @@ class TextProcessor:
         images: List[Image.Image],
     ) -> List[str]:
         """Ask the same *question* about each image.
-
-        Parameters
-        ----------
-        question:
+        return [self.vqa(question, images=[img]) for img in images]
             Question to ask.
         images:
             List of images.

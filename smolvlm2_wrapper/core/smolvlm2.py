@@ -1,35 +1,30 @@
+
 """
-SmolVLM2-500M-Video-Instruct wrapper.
+Generic text model wrapper for HuggingFace-compatible models (multi-modal or text-only).
 
-This module provides :class:`SmolVLM2Wrapper`, a concrete implementation of
-:class:`~smolvlm2_wrapper.core.model.BaseModelWrapper` that integrates
-HuggingFace's SmolVLM2-500M-Video-Instruct model for multi-modal inference.
+This module provides :class:`GenericTextModelWrapper`, a concrete implementation of
+:class:`~smolvlm2_wrapper.core.model.BaseModelWrapper` that integrates any HuggingFace-compatible
+text generation model for multi-modal or text-only inference.
 
-The model supports
+Supports:
 * **image–text** inputs (single or multiple images)
 * **video** inputs (sequences of frames treated as images)
 * **text-only** inputs
 
 Example – image captioning::
 
-    from smolvlm2_wrapper import SmolVLM2Wrapper
+    from smolvlm2_wrapper import GenericTextModelWrapper
     from PIL import Image
 
-    model = SmolVLM2Wrapper()
+    model = GenericTextModelWrapper(model_id="HuggingFaceTB/SmolVLM2-500M-Video-Instruct")
     caption = model.caption(Image.open("photo.jpg"))
     print(caption)
 
-Example – visual question answering::
+Example – text generation::
 
-    answer = model.answer_question(
-        "What objects are in the background?",
-        images=[Image.open("photo.jpg")],
-    )
-
-Example – video description::
-
-    frames = model.extract_video_frames("clip.mp4", max_frames=8)
-    description = model.describe_video(frames)
+    model = GenericTextModelWrapper(model_id="gpt2")
+    text = model.generate("Write a poem about the sea.")
+    print(text)
 """
 
 from __future__ import annotations
@@ -39,22 +34,24 @@ from typing import Any, List, Optional, Union
 
 from PIL import Image
 
+
 from smolvlm2_wrapper.core.config import ModelConfig
 from smolvlm2_wrapper.core.model import BaseModelWrapper
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_MODEL_ID = "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"
+
+_DEFAULT_MODEL_ID = "gpt2"
 
 
-class SmolVLM2Wrapper(BaseModelWrapper):
-    """Wrapper around SmolVLM2-500M-Video-Instruct.
+
+class GenericTextModelWrapper(BaseModelWrapper):
+    """Generic wrapper for any HuggingFace-compatible text generation model.
 
     Parameters
     ----------
     config:
-        Optional :class:`ModelConfig`.  Defaults to SmolVLM2-500M on the
-        best available device.
+        Optional :class:`ModelConfig`.  Defaults to GPT-2 on the best available device.
 
     Notes
     -----
@@ -70,9 +67,9 @@ class SmolVLM2Wrapper(BaseModelWrapper):
     # ------------------------------------------------------------------ #
 
     def _load_model(self) -> None:
-        """Load the AutoProcessor and AutoModelForVision2Seq from HuggingFace."""
+        """Load the AutoTokenizer and AutoModelForCausalLM or multimodal model from HuggingFace."""
         import torch
-        from transformers import AutoProcessor, AutoModelForVision2Seq
+        from transformers import AutoTokenizer, AutoModelForCausalLM, AutoProcessor, AutoModelForVision2Seq
 
         dtype_map = {
             "float16": torch.float16,
@@ -91,14 +88,26 @@ class SmolVLM2Wrapper(BaseModelWrapper):
             load_kwargs["low_cpu_mem_usage"] = True
         load_kwargs.update(self.config.extra)
 
-        self._processor = AutoProcessor.from_pretrained(
-            self.config.model_id,
-            **({} if not self.config.cache_dir else {"cache_dir": self.config.cache_dir}),
-        )
-        self._model = AutoModelForVision2Seq.from_pretrained(
-            self.config.model_id,
-            **load_kwargs,
-        ).to(self.device)
+        # Try to load as a multimodal model first, fallback to text-only
+        try:
+            self._processor = AutoProcessor.from_pretrained(
+                self.config.model_id,
+                **({} if not self.config.cache_dir else {"cache_dir": self.config.cache_dir}),
+            )
+            self._model = AutoModelForVision2Seq.from_pretrained(
+                self.config.model_id,
+                **load_kwargs,
+            ).to(self.device)
+        except Exception:
+            self._tokenizer = AutoTokenizer.from_pretrained(
+                self.config.model_id,
+                **({} if not self.config.cache_dir else {"cache_dir": self.config.cache_dir}),
+            )
+            self._model = AutoModelForCausalLM.from_pretrained(
+                self.config.model_id,
+                **load_kwargs,
+            ).to(self.device)
+            self._processor = None
 
     # ------------------------------------------------------------------ #
     # core inference                                                       #
@@ -111,75 +120,47 @@ class SmolVLM2Wrapper(BaseModelWrapper):
         videos: Optional[List[List[Image.Image]]] = None,
         **kwargs: Any,
     ) -> str:
-        """Run SmolVLM2 inference and return a text string.
-
-        The method builds a chat-style message list from *prompt* and the
-        optional visual inputs, tokenises them with the AutoProcessor, runs
-        ``model.generate``, then decodes and returns the new tokens only.
-
-        Parameters
-        ----------
-        prompt:
-            Instruction or question.
-        images:
-            Zero or more PIL images to include.
-        videos:
-            Zero or more videos, each represented as a list of PIL frames.
-            Frames are sampled / passed through the processor automatically.
-        **kwargs:
-            Override generation parameters (e.g. ``max_new_tokens=512``).
-
-        Returns
-        -------
-        str
-            Model response text (input tokens stripped).
-        """
+        """Run inference and return a text string (supports text-only and multi-modal)."""
         if not self._loaded:
             self.load()
 
         import torch
 
-        content: list = []
-
-        # attach image tokens
-        for img in (images or []):
-            content.append({"type": "image"})
-
-        # attach video tokens (video = list of PIL frames)
-        for _ in (videos or []):
-            content.append({"type": "video"})
-
-        content.append({"type": "text", "text": prompt})
-
-        messages = [{"role": "user", "content": content}]
-
-        # build the text prompt via apply_chat_template
-        text_prompt = self._processor.apply_chat_template(
-            messages, add_generation_prompt=True
-        )
-
-        # collect flat PIL inputs for the processor
-        flat_images = list(images or [])
-        flat_video_frames = list(videos or [])
-
-        processor_kwargs: dict = {"text": text_prompt, "return_tensors": "pt"}
-        if flat_images:
-            processor_kwargs["images"] = flat_images
-        if flat_video_frames:
-            processor_kwargs["videos"] = flat_video_frames
-
-        inputs = self._processor(**processor_kwargs).to(self.device)
-
-        gen_kwargs = self.config.generation_kwargs()
-        gen_kwargs.update(kwargs)
-
-        with torch.no_grad():
-            output_ids = self._model.generate(**inputs, **gen_kwargs)
-
-        # strip input tokens from output
-        input_len = inputs["input_ids"].shape[1]
-        new_ids = output_ids[:, input_len:]
-        return self._processor.decode(new_ids[0], skip_special_tokens=True)
+        if self._processor is not None:
+            # Multi-modal (image/video/text)
+            content: list = []
+            for img in (images or []):
+                content.append({"type": "image"})
+            for _ in (videos or []):
+                content.append({"type": "video"})
+            content.append({"type": "text", "text": prompt})
+            messages = [{"role": "user", "content": content}]
+            text_prompt = self._processor.apply_chat_template(
+                messages, add_generation_prompt=True
+            )
+            flat_images = list(images or [])
+            flat_video_frames = list(videos or [])
+            processor_kwargs: dict = {"text": text_prompt, "return_tensors": "pt"}
+            if flat_images:
+                processor_kwargs["images"] = flat_images
+            if flat_video_frames:
+                processor_kwargs["videos"] = flat_video_frames
+            inputs = self._processor(**processor_kwargs).to(self.device)
+            gen_kwargs = self.config.generation_kwargs()
+            gen_kwargs.update(kwargs)
+            with torch.no_grad():
+                output_ids = self._model.generate(**inputs, **gen_kwargs)
+            input_len = inputs["input_ids"].shape[1]
+            new_ids = output_ids[:, input_len:]
+            return self._processor.decode(new_ids[0], skip_special_tokens=True)
+        else:
+            # Text-only model
+            input_ids = self._tokenizer(prompt, return_tensors="pt").input_ids.to(self.device)
+            gen_kwargs = self.config.generation_kwargs()
+            gen_kwargs.update(kwargs)
+            with torch.no_grad():
+                output_ids = self._model.generate(input_ids, **gen_kwargs)
+            return self._tokenizer.decode(output_ids[0], skip_special_tokens=True)
 
     # ------------------------------------------------------------------ #
     # convenience high-level methods                                       #

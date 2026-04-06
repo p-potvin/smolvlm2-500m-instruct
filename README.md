@@ -93,6 +93,63 @@ Pull requests and issues are welcome!
 5. [Extending to other models](#extending-to-other-models)
 6. [Low-power device tips](#low-power-device-tips)
 7. [Running the tests](#running-the-tests)
+8. [Agent and Workflow Manager API](#agent-and-workflow-manager-api)
+## Agent and Workflow Manager API
+
+### ExtrovertAgent
+
+`vaultwares-agentciation.extrovert_agent.ExtrovertAgent`
+
+An agent that maintains live team awareness and socialization via Redis. Every user interaction triggers a heartbeat, status update, project re-evaluation, and peer acknowledgement. Includes:
+
+- `start()` / `stop()` — lifecycle management
+- `socialize()` — full team status broadcast and report
+- `on_user_interaction()` — must be called before every user response
+- `get_team_report()` — returns a human-readable team status block
+
+#### Example
+```python
+from vaultwares-agentciation.extrovert_agent import ExtrovertAgent
+agent = ExtrovertAgent("agent-1")
+agent.start()
+print(agent.socialize())
+agent.stop()
+```
+
+### LonelyManager
+
+`vaultwares-agentciation.lonely_manager.LonelyManager`
+
+Extends ExtrovertAgent to enforce project alignment and monitor all agents. Features:
+
+- Monitors heartbeats, triggers alerts for missed heartbeats
+- Loads and previews TODO.md and roadmap.md
+- Publishes project status and alignment nudges
+- `get_project_status_report()` — full project/team status
+
+#### Example
+```python
+from vaultwares-agentciation.lonely_manager import LonelyManager
+manager = LonelyManager()
+manager.start()
+print(manager.get_project_status_report())
+manager.stop()
+```
+
+### WorkflowExportAgent
+
+`smolvlm2_wrapper.workflow_export_agent.WorkflowExportAgent`
+
+Exports Python-based workflows to ComfyUI/Diffusion formats, with validation and event publishing.
+
+#### Example
+```python
+from smolvlm2_wrapper.workflow_export_agent import WorkflowExportAgent
+from smolvlm2_wrapper.shared_context import SharedContext
+agent = WorkflowExportAgent(SharedContext())
+result = agent.export_to_comfyui({"foo": "bar"})
+print(result)
+```
 
 ---
 

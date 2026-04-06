@@ -15,14 +15,14 @@ Requires SmolVLM2 weights to be downloadable from HuggingFace.
 
 import argparse
 
-from smolvlm2_wrapper import SmolVLM2Wrapper
+from smolvlm2_wrapper import GenericTextModelWrapper
 from smolvlm2_wrapper.text.processor import TextProcessor
 from smolvlm2_wrapper.utils.io import load_image
 
 
 def run(image_path: str) -> None:
     print("Loading model …")
-    model = SmolVLM2Wrapper()
+    model = GenericTextModelWrapper()
     tp = TextProcessor(model=model)
     img = load_image(image_path)
 

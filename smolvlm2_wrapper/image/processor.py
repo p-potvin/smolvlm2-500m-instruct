@@ -27,21 +27,21 @@ Usage (with SmolVLM2 for captioning / guided inpainting)::
 from __future__ import annotations
 
 import logging
+import random
+import string
 from pathlib import Path
 from typing import Any, Optional, Tuple, Union
 
 from PIL import Image
 
 from smolvlm2_wrapper.image import manipulation, mask as mask_mod, inpaint as inpaint_mod
+from extrovert_agent import ExtrovertAgent
+from enums import AgentStatus
 
 logger = logging.getLogger(__name__)
 
 
-import random
-import string
-from smolvlm2_wrapper.redis_coordination import RedisCoordinator
-
-class ImageProcessor:
+class ImageProcessor(ExtrovertAgent):
     """Chainable image processing pipeline with optional model integration.
 
     Parameters
@@ -53,12 +53,13 @@ class ImageProcessor:
     """
 
     def __init__(self, model=None) -> None:
-        self._model = model
-        self._image: Optional[Image.Image] = None
         # Generate unique agent ID: image-XXXX
         agent_id = 'image-' + ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
-        self._coordinator = RedisCoordinator(agent_id=agent_id)
-        # Example: self._coordinator.publish('STATUS', 'init', {'msg': 'ImageProcessor ready'})
+        super().__init__(agent_id=agent_id)
+        
+        self._model = model
+        self._image: Optional[Image.Image] = None
+        self.start()
 
     # ------------------------------------------------------------------ #
     # state management                                                     #
@@ -368,71 +369,49 @@ class ImageProcessor:
     # ------------------------------------------------------------------ #
 
     def caption(self, style: str = "detailed") -> str:
-        """Generate a caption for the current image using the attached model.
-
-        Parameters
-        ----------
-        style:
-            ``"brief"``, ``"detailed"``, or ``"tags"``.
-
-        Returns
-        -------
-        str
-            Caption text.
-
-        Raises
-        ------
-        RuntimeError
-            If no model was provided at construction.
-
-        Example::
-
-            from smolvlm2_wrapper import SmolVLM2Wrapper, ImageProcessor
-            proc = ImageProcessor(model=SmolVLM2Wrapper())
-            caption = proc.load("photo.jpg").caption()
-        """
+        """Generate a caption for the current image using the attached model."""
+        self.update_status(AgentStatus.WORKING)
         if self._model is None:
+            self.update_status(AgentStatus.WAITING_FOR_INPUT)
             raise RuntimeError("No model attached.  Pass model=SmolVLM2Wrapper() to ImageProcessor.")
-        return self._model.caption(self.get_image(), style=style)
+        
+        # Check if the model has a generic generate or an image-specific caption method
+        try:
+            if hasattr(self._model, 'caption'):
+                res = self._model.caption(self.get_image(), style=style)
+            else:
+                from smolvlm2_wrapper.text.prompts import build_caption_prompt
+                prompt = build_caption_prompt(style)
+                res = self._model.generate(prompt, images=[self.get_image()])
+        finally:
+            self.update_status(AgentStatus.WAITING_FOR_INPUT)
+        return res
 
     def describe(self, question: str = "Describe this image in detail.") -> str:
-        """Ask an arbitrary question about the current image.
-
-        Parameters
-        ----------
-        question:
-            Any natural-language instruction or question.
-
-        Returns
-        -------
-        str
-            Model response.
-
-        Example::
-
-            answer = proc.load("chart.png").describe("What does this chart show?")
-        """
+        """Ask an arbitrary question about the current image."""
+        self.update_status(AgentStatus.WORKING)
         if self._model is None:
-            raise RuntimeError("No model attached.")
-        return self._model.answer_question(question, images=[self.get_image()])
+            self.update_status(AgentStatus.WAITING_FOR_INPUT)
+            raise RuntimeError("No model attached.  Pass model=SmolVLM2Wrapper() to ImageProcessor.")
+        
+        try:
+            if hasattr(self._model, 'vqa'):
+                res = self._model.vqa(question, images=[self.get_image()])
+            else:
+                res = self._model.generate(question, images=[self.get_image()])
+        finally:
+            self.update_status(AgentStatus.WAITING_FOR_INPUT)
+        return res
 
     def enhance_prompt(self, prompt: str) -> str:
-        """Use the model to enrich *prompt* using the current image as context.
-
-        Parameters
-        ----------
-        prompt:
-            Base prompt to enhance.
-
-        Returns
-        -------
-        str
-            Enhanced prompt.
-
-        Example::
-
-            better = proc.load("photo.jpg").enhance_prompt("a beach scene")
-        """
+        """Use the model to enrich *prompt* using the current image as context."""
+        self.update_status(AgentStatus.WORKING)
         if self._model is None:
+            self.update_status(AgentStatus.WAITING_FOR_INPUT)
             raise RuntimeError("No model attached.")
-        return self._model.enhance_prompt(prompt, image=self.get_image())
+        
+        try:
+            res = self._model.generate(f"Enhance this prompt: {prompt}", images=[self.get_image()])
+        finally:
+            self.update_status(AgentStatus.WAITING_FOR_INPUT)
+        return res

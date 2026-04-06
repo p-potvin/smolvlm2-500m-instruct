@@ -61,8 +61,8 @@ def run(video_path: str, output_dir: str = "/tmp/smolvlm2_demo/video") -> None:
 
     # ── 6. (optional) model description ─────────────────────────────────────
     try:
-        from smolvlm2_wrapper import SmolVLM2Wrapper
-        model = SmolVLM2Wrapper()
+        from smolvlm2_wrapper import GenericTextModelWrapper
+        model = GenericTextModelWrapper()
         desc_proc = VideoProcessor(model=model)
         desc_proc.set_frames(proc.get_frames())
         desc_proc.sample(8)

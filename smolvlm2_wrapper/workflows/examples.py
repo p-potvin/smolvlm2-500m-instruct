@@ -15,10 +15,10 @@ Available workflows
 
 Usage::
 
-    from smolvlm2_wrapper import SmolVLM2Wrapper
+    from smolvlm2_wrapper import GenericTextModelWrapper
     from smolvlm2_wrapper.workflows.examples import PhotoEnhancementWorkflow
 
-    model = SmolVLM2Wrapper()
+    model = GenericTextModelWrapper()
     wf = PhotoEnhancementWorkflow(model=model)
     result = wf.run({
         "image_path": "photo.jpg",
@@ -83,10 +83,10 @@ class PhotoEnhancementWorkflow(Workflow):
 
     Example::
 
-        from smolvlm2_wrapper import SmolVLM2Wrapper
+        from smolvlm2_wrapper import GenericTextModelWrapper
         from smolvlm2_wrapper.workflows.examples import PhotoEnhancementWorkflow
 
-        wf = PhotoEnhancementWorkflow(model=SmolVLM2Wrapper())
+        wf = PhotoEnhancementWorkflow(model=GenericTextModelWrapper())
         result = wf.run({"image_path": "photo.jpg", "output_path": "out.jpg"})
         print(result["caption"])
     """
@@ -159,10 +159,10 @@ class VideoAnalysisWorkflow(Workflow):
 
     Example::
 
-        from smolvlm2_wrapper import SmolVLM2Wrapper
+        from smolvlm2_wrapper import GenericTextModelWrapper
         from smolvlm2_wrapper.workflows.examples import VideoAnalysisWorkflow
 
-        wf = VideoAnalysisWorkflow(model=SmolVLM2Wrapper())
+        wf = VideoAnalysisWorkflow(model=GenericTextModelWrapper())
         result = wf.run({"video_path": "clip.mp4"})
         print(result["description"])
     """
@@ -219,10 +219,10 @@ class PromptGenerationWorkflow(Workflow):
 
     Example::
 
-        from smolvlm2_wrapper import SmolVLM2Wrapper
+        from smolvlm2_wrapper import GenericTextModelWrapper
         from smolvlm2_wrapper.workflows.examples import PromptGenerationWorkflow
 
-        wf = PromptGenerationWorkflow(model=SmolVLM2Wrapper())
+        wf = PromptGenerationWorkflow(model=GenericTextModelWrapper())
         result = wf.run({"image_path": "photo.jpg"})
         print(result["sd_prompt"])
     """

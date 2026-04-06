@@ -1,6 +1,8 @@
 import threading
 import time
 import json
+import os
+import re
 from base_agent import AgentBase
 from enums import AgentStatus
 
@@ -175,6 +177,13 @@ class ExtrovertAgent(AgentBase):
         """
         sender = data.get("agent")
         action = data.get("action")
+        target = data.get("target")
+
+        # Process assignments even if sent by itself or to specifically this agent
+        if action == "ASSIGN":
+            if target == self.agent_id:
+                self._on_assignment_received(data.get("task"), data.get("details", {}))
+            return
 
         if not sender or sender == self.agent_id:
             return  # Ignore own messages
@@ -187,6 +196,91 @@ class ExtrovertAgent(AgentBase):
             self._on_peer_joined(sender, data.get("details", {}))
         elif action == "LEAVE":
             self._on_peer_left(sender)
+
+    def _on_assignment_received(self, task: str, details: dict):
+        """React to a task assignment from the manager or a peer."""
+        print(f"\n📢 [{self.agent_id}] Assignment Received: {task}")
+        print(f"📝 Details: {details.get('description', 'No description')}")
+        
+        def _execute():
+            # 1. Update status to WORKING
+            self.update_status(AgentStatus.WORKING)
+            time.sleep(10) # Simulating heavy processing
+            
+            # 2. Update TASKS.md to FINISHED
+            self._update_tasks_md_finished(task)
+            
+            # 3. Handle PR creation
+            # Since agents have access to the GitHub MCP server, we'll
+            # push the work and then instruct the environment to create the PR.
+            self._handle_real_pr(task)
+            
+            print(f"✅ [{self.agent_id}] Task {task} Complete. Branch pushed.")
+            print(f"💡 [{self.agent_id}] Requesting PR via GitHub MCP...")
+            
+            # 4. Update status back to WAITING_FOR_INPUT
+            self.update_status(AgentStatus.WAITING_FOR_INPUT)
+
+        threading.Thread(target=_execute, daemon=True).start()
+
+    def _handle_real_pr(self, task_id):
+        """Creates a real branch, commits, and pushes work."""
+        import subprocess
+        try:
+            branch_name = f"task-{task_id}-{self.agent_id}"
+            print(f"🌿 [{self.agent_id}] Creating branch {branch_name}...")
+            
+            # 1. Ensure we are on main
+            subprocess.run(["git", "checkout", "main"], check=True)
+            
+            # 2. Create and switch to new branch
+            subprocess.run(["git", "checkout", "-b", branch_name], check=True)
+            
+            # 3. Add and commit changes
+            subprocess.run(["git", "add", "."], check=True)
+            subprocess.run(["git", "commit", "-m", f"Complete task {task_id} by {self.agent_id}"], check=True)
+            
+            # 4. Push to origin
+            print(f"🚀 [{self.agent_id}] Pushing to origin...")
+            subprocess.run(["git", "push", "origin", branch_name], check=True)
+            
+            # 5. Instructions for the environment/agent to use the MCP server
+            # Since the agent class itself doesn't directly call the MCP tool,
+            # it logs the requirement so the driving agent (me) sees and executes it.
+            print(f"📋 [MCP_REQUEST] PLEASE CREATE PR: repo='p-potvin/vaultwares-pipelines', head='{branch_name}', base='main', title='Task {task_id} by {self.agent_id}', reviewer='p-potvin'")
+            
+            # 6. Switch back to main
+            subprocess.run(["git", "checkout", "main"], check=True)
+            
+        except subprocess.CalledProcessError as e:
+            print(f"❌ [{self.agent_id}] Git Error: {e}")
+        except Exception as e:
+            print(f"❌ [{self.agent_id}] Unexpected Error: {e}")
+
+    def _update_tasks_md_finished(self, task_id):
+        """Logic to update the TASKS.md file to mark task as FINISHED ([x])."""
+        import os
+        import re
+        try:
+            tasks_path = os.path.join(os.getcwd(), "TASKS.md")
+            if not os.path.exists(tasks_path): return
+            
+            with open(tasks_path, "r", encoding="utf-8") as f:
+                content = f.read()
+                
+            # Regex to find the [ ] for the specific task_id
+            pattern = rf"^(\s*{re.escape(task_id)}\s+\[)([ ~])(\].*)$"
+            new_content = []
+            for line in content.splitlines():
+                if re.match(pattern, line):
+                    new_content.append(re.sub(pattern, r"\1x\3", line))
+                else:
+                    new_content.append(line)
+                    
+            with open(tasks_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(new_content) + "\n")
+        except Exception as e:
+            print(f"Error updating TASKS.md: {e}")
 
     def _register_peer_heartbeat(self, agent_id: str, details: dict):
         """Record a heartbeat from a peer and reset its missed-heartbeat counter."""

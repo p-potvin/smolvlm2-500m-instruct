@@ -25,21 +25,21 @@ Usage (with model)::
 from __future__ import annotations
 
 import logging
+import random
+import string
 from pathlib import Path
 from typing import Any, Callable, List, Optional, Tuple, Union
 
 from PIL import Image
 
 from smolvlm2_wrapper.video import manipulation, utils as vid_utils
+from extrovert_agent import ExtrovertAgent
+from enums import AgentStatus
 
 logger = logging.getLogger(__name__)
 
 
-import random
-import string
-from smolvlm2_wrapper.redis_coordination import RedisCoordinator
-
-class VideoProcessor:
+class VideoProcessor(ExtrovertAgent):
     """Chainable video processing pipeline with optional model integration.
 
     Parameters
@@ -50,13 +50,14 @@ class VideoProcessor:
     """
 
     def __init__(self, model=None) -> None:
+        # Generate unique agent ID: video-XXXX
+        agent_id = 'video-' + ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
+        super().__init__(agent_id=agent_id)
+        
         self._model = model
         self._frames: List[Image.Image] = []
         self._fps: float = 24.0
-        # Generate unique agent ID: video-XXXX
-        agent_id = 'video-' + ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
-        self._coordinator = RedisCoordinator(agent_id=agent_id)
-        # Example: self._coordinator.publish('STATUS', 'init', {'msg': 'VideoProcessor ready'})
+        self.start()
 
     # ------------------------------------------------------------------ #
     # I/O                                                                  #
@@ -282,31 +283,20 @@ class VideoProcessor:
         self,
         prompt: str = "Describe what is happening in this video.",
     ) -> str:
-        """Generate a natural-language description using the attached model.
-
-        Parameters
-        ----------
-        prompt:
-            Custom instruction.
-
-        Returns
-        -------
-        str
-            Model-generated description.
-
-        Raises
-        ------
-        RuntimeError
-            If no model was attached.
-
-        Example::
-
-            desc = VideoProcessor(model=SmolVLM2Wrapper()) \
-                .load("clip.mp4").sample(8).describe()
-        """
+        """Generate a natural-language description using the attached model."""
+        self.update_status(AgentStatus.WORKING)
         if self._model is None:
+            self.update_status(AgentStatus.WAITING_FOR_INPUT)
             raise RuntimeError("No model attached.  Pass model=SmolVLM2Wrapper() to VideoProcessor.")
-        return self._model.describe_video(self._frames, prompt=prompt)
+        
+        try:
+            if hasattr(self._model, 'describe_video'):
+                res = self._model.describe_video(self._frames, prompt=prompt)
+            else:
+                res = self._model.generate(prompt, images=self._frames)
+        finally:
+            self.update_status(AgentStatus.WAITING_FOR_INPUT)
+        return res
 
     def caption_frames(
         self,
