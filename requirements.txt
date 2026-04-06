@@ -29,9 +29,9 @@ fastapi
 uvicorn[standard]
 psutil>=5.9.0          # memory_info() in DeviceManager
 
-ipython==9.12.0
-redis==7.4.0
-pyinstaller==6.19.0
+ipython
+redis
+pyinstaller
 pydantic
 # For persistent storage integrations (to be implemented):
 # google-api-python-client  # Google Drive
