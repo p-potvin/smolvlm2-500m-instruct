@@ -4,7 +4,8 @@ import time
 import requests
 
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
-from extrovert_agent import ExtrovertAgent
+import importlib
+ExtrovertAgent = importlib.import_module('vaultwares-agentciation.extrovert_agent').ExtrovertAgent
 
 def research_nvidia_wfm():
     # Simple web search and summary (placeholder)

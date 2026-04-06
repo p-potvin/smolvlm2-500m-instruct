@@ -3,8 +3,8 @@ import time
 import json
 import os
 import re
-from base_agent import AgentBase
-from enums import AgentStatus
+from .base_agent import AgentBase
+from .enums import AgentStatus
 
 
 class ExtrovertAgent(AgentBase):

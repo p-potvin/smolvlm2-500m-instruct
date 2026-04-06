@@ -1,0 +1,56 @@
+[
+  {
+    "name": "Vintage Velvet",
+    "mode": "light",
+    "primary": "#F5F5DC",
+    "accent": "#800020"
+  },
+  {
+    "name": "Cyberpunk Cinder",
+    "mode": "dark",
+    "primary": "#073642",
+    "accent": "#CB4B16"
+  },
+  {
+    "name": "Golden Slate",
+    "mode": "dark",
+    "primary": "#4A5459",
+    "accent": "#D4AF37"
+  },
+  {
+    "name": "Modern Monolith",
+    "mode": "light",
+    "primary": "#FAF9F6",
+    "accent": "#333333"
+  },
+  {
+    "name": "Crimson Bloom",
+    "mode": "dark",
+    "primary": "#8B0000",
+    "accent": "#FFC0CB"
+  },
+  {
+    "name": "Ocean Mist",
+    "mode": "light",
+    "primary": "#D3D3D3",
+    "accent": "#006994"
+  },
+  {
+    "name": "Neon Void",
+    "mode": "dark",
+    "primary": "#222222",
+    "accent": "#00FFFF"
+  },
+  {
+    "name": "Royal Tangerine",
+    "mode": "dark",
+    "primary": "#4B0082",
+    "accent": "#F28500"
+  },
+  {
+    "name": "Amethyst Frost",
+    "mode": "light",
+    "primary": "#FDFDFD",
+    "accent": "#800080"
+  }
+]

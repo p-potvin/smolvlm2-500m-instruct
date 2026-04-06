@@ -33,3 +33,7 @@ ipython==9.12.0
 redis==7.4.0
 pyinstaller==6.19.0
 pydantic
+# For persistent storage integrations (to be implemented):
+# google-api-python-client  # Google Drive
+# dropbox  # Dropbox
+# pyicloud  # iCloud

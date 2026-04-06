@@ -1,6 +1,7 @@
+
 from .enums import AgentStatus
 from .redis_coordinator import RedisCoordinator
-from .agent_base import AgentBase
+from .base_agent import AgentBase
 from .extrovert_agent import ExtrovertAgent
 from .lonely_manager import LonelyManager
 

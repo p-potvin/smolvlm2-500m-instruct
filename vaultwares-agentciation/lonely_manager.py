@@ -1,8 +1,9 @@
 import threading
 import time
 import json
-from extrovert_agent import ExtrovertAgent
-from enums import AgentStatus
+import importlib
+ExtrovertAgent = importlib.import_module('vaultwares-agentciation.extrovert_agent').ExtrovertAgent
+AgentStatus = importlib.import_module('vaultwares-agentciation.enums').AgentStatus
 
 
 class LonelyManager(ExtrovertAgent):

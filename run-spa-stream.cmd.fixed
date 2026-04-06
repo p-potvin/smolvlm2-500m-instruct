@@ -1,0 +1,38 @@
+@echo off
+setlocal
+
+:: Path Configuration
+set "PROJECT_ROOT=%~dp0"
+set "PYTHON_EXE=%PROJECT_ROOT%.venv\Scripts\python.exe"
+
+:: Environment setup
+set "PYTHONPATH=%PROJECT_ROOT%;%PROJECT_ROOT%vaultwares-agentciation"
+
+:: Check for Redis (required for coordination)
+echo [System] Checking for Redis...
+set REDIS_RUNNING=0
+tasklist /fi "imagename eq redis-server.exe" 2^>nul | find /i "redis-server.exe" > nul
+if not errorlevel 1 set REDIS_RUNNING=1
+
+if %REDIS_RUNNING%==0 (
+    echo [Warning] redis-server.exe not found in tasklist. 
+    echo [Warning] Multi-agent coordination requires a running Redis instance (localhost:6379).
+    echo [Action] Starting local redis-server if available in path...
+    start /min "Redis" redis-server.exe
+    timeout /t 2 > nul
+)
+
+echo.
+echo --- 🚀 VaultWares Pipeline Stream: SPA Deployment Team ---
+echo.
+
+:: Launch the coordination script
+if exist "%PYTHON_EXE%" (
+    set PYTHONPATH=%PROJECT_ROOT%;%PROJECT_ROOT%vaultwares-agentciation
+    "%PYTHON_EXE%" assign_spa_tasks.py
+) else (
+    echo [Error] Virtual environment not found at .venv\Scripts\python.exe
+    echo [Action] Please run 'python -m venv .venv' and install requirements first.
+)
+
+pause

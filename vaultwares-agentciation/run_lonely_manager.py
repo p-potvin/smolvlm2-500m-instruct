@@ -4,8 +4,8 @@ This script instantiates the LonelyManager from vaultwares-agentciation and star
 """
 import sys
 import os
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), 'vaultwares-agentciation')))
-from lonely_manager import LonelyManager
+import importlib
+LonelyManager = importlib.import_module('vaultwares-agentciation.lonely_manager').LonelyManager
 import time
 import sys
 import os

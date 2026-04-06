@@ -1,11 +1,36 @@
-
 import React, { useState } from 'react';
 import { Modal } from './Modal';
+import { useVaultTheme } from '../../lib/vaultTheme';
+
+// ThemeSwitcher must be outside the render of WorkflowList
+function ThemeSwitcher({ theme, themeIndex, setThemeIndex, themes }) {
+  return (
+    <div className="mb-4 flex items-center gap-2">
+      <span className="font-semibold">Theme:</span>
+      <select
+        value={themeIndex}
+        onChange={e => setThemeIndex(Number(e.target.value))}
+        style={{
+          background: theme.primary,
+          color: theme.accent,
+          border: `1px solid ${theme.accent}`,
+          borderRadius: 6,
+          padding: '2px 8px',
+        }}
+      >
+        {themes.map((t, i) => (
+          <option key={t.name} value={i}>{t.name}</option>
+        ))}
+      </select>
+    </div>
+  );
+}
 
 export function WorkflowList({ workflows }) {
   const [editing, setEditing] = useState(null);
   const [editName, setEditName] = useState('');
   const [editCategory, setEditCategory] = useState('');
+  const { theme, themeIndex, setThemeIndex, themes } = useVaultTheme();
 
   const openEdit = (wf) => {
     setEditing(wf);
@@ -25,6 +50,7 @@ export function WorkflowList({ workflows }) {
 
   return (
     <div className="p-4">
+      <ThemeSwitcher theme={theme} themeIndex={themeIndex} setThemeIndex={setThemeIndex} themes={themes} />
       <h2 className="text-2xl font-bold mb-4">Workflows</h2>
       <ul className="space-y-2">
         {workflows && workflows.length > 0 ? (

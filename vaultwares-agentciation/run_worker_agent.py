@@ -6,7 +6,8 @@ import sys
 import os
 import time
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
-from extrovert_agent import ExtrovertAgent
+import importlib
+ExtrovertAgent = importlib.import_module('vaultwares-agentciation.extrovert_agent').ExtrovertAgent
 
 def main(agent_id):
     agent = ExtrovertAgent(agent_id=agent_id)

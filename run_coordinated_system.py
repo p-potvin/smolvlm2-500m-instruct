@@ -7,7 +7,8 @@ sys.path.append(os.getcwd())
 sys.path.append(os.path.join(os.getcwd(), "vaultwares-agentciation"))
 
 from smolvlm2_wrapper import TextProcessor, ImageProcessor, VideoProcessor
-from lonely_manager import LonelyManager
+import importlib
+LonelyManager = importlib.import_module('vaultwares-agentciation.lonely_manager').LonelyManager
 
 def main():
     print("--- Initializing Multi-Agent System (Standardized Coordination) ---")

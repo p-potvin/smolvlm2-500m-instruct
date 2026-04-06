@@ -33,8 +33,9 @@ from typing import Any, Callable, List, Optional, Tuple, Union
 from PIL import Image
 
 from smolvlm2_wrapper.video import manipulation, utils as vid_utils
-from extrovert_agent import ExtrovertAgent
-from enums import AgentStatus
+import importlib
+ExtrovertAgent = importlib.import_module('vaultwares-agentciation.extrovert_agent').ExtrovertAgent
+AgentStatus = importlib.import_module('vaultwares-agentciation.enums').AgentStatus
 
 logger = logging.getLogger(__name__)
 

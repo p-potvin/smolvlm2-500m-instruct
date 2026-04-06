@@ -5,27 +5,88 @@
 A modular platform for text, image, and video generation/editing using AI agents, with workflow orchestration, compliance, and a Gradio-based GUI.
 
 ## Features
-- Specialized agents for text, image, video
-- Workflow creation, editing, and export (ComfyUI, Diffusers)
-- Gradio GUI with live resource monitoring
-- PyInstaller packaging for local deployment
+
 
 ## Quickstart
+
+### Backend (Python/Gradio GUI)
 1. Install dependencies:
-   ```
-   pip install -r requirements.txt
-   ```
-2. Run the GUI:
-   ```
-   python examples/workflow_gui_gradio.py
-   ```
-3. Build executable (Windows):
-   ```
-   powershell ./build_gradio_app.ps1
-   ```
+    ```bash
+    pip install -r requirements.txt
+    ```
+2. (Recommended) Create and activate a virtual environment:
+    ```bash
+    python -m venv .venv
+    # Windows:
+    .venv\Scripts\activate
+    # Linux/macOS:
+    source .venv/bin/activate
+    ```
+3. Run the Gradio GUI locally:
+    ```bash
+    python examples/workflow_gui_gradio.py
+    ```
 4. Open http://127.0.0.1:7860 in your browser.
 
-## Modules
+### Frontend (React SPA)
+1. Open a new terminal and navigate to `frontend/`:
+    ```bash
+    cd frontend
+    ```
+2. Install dependencies:
+    ```bash
+    npm install
+    ```
+3. Start the development server:
+    ```bash
+    npm run dev
+    ```
+4. Open the URL shown in the terminal (usually http://localhost:5173).
+
+---
+
+## Module Documentation
+
+### Backend Modules
+
+- **api_server.py**: FastAPI server for workflow CRUD, backup/restore, and NIM VM integration. Endpoints: `/workflows`, `/workflows/export`, `/workflows/backup`, `/workflows/restore`, etc.
+
+- **smolvlm2_wrapper/**: Main Python package for all agent logic.
+  - `agent_text.py`: Text agent (captioning, VQA, prompt engineering).
+  - `agent_image.py`: Image agent (editing, masking, inpainting).
+  - `agent_video.py`: Video agent (frame sampling, analysis, editing).
+  - `agent_workflow.py`: Workflow orchestration and chaining.
+  - `context_schema.py`: Shared context definitions for agents.
+  - `compliance.py`: Compliance and validation hooks.
+  - `central_error_logger.py`: Centralized error/event logging.
+  - `workflow_export_agent.py`: Export workflows to ComfyUI/Diffusion formats.
+  - `workflows/`: Built-in workflows (photo enhancement, inpainting, video analysis, etc.).
+  - `core/`, `image/`, `video/`, `text/`, `utils/`: Core model wrappers, manipulation utilities, and processors.
+
+- **vaultwares-agentciation/**: Social/coordination agents.
+  - `extrovert_agent.py`: Team awareness, status, and socialization via Redis.
+  - `lonely_manager.py`: Project alignment, TODO/roadmap monitoring, and nudges.
+  - `base_agent.py`, `enums.py`, etc.: Agent base classes and enums.
+
+- **examples/**: Example scripts and the main Gradio GUI (`workflow_gui_gradio.py`).
+
+### Frontend Modules
+
+- **frontend/src/App.jsx**: Main React SPA entry point. Renders sidebar, workflow list, modals, and all dashboard widgets.
+- **frontend/src/WorkflowList.jsx**: Workflow list and actions (edit, delete, etc.).
+- **frontend/src/Sidebar.jsx**: Category navigation sidebar.
+- **frontend/src/Modal.jsx**: Modal dialog component for create/edit actions.
+- **frontend/src/ImageTools.jsx**: Photo editing widget (crop, mask, resize, etc.).
+- **frontend/src/ImageCaptioning.jsx**: Image captioning/tagging UI.
+- **frontend/src/LoRATraining.jsx**: LoRA training workflow UI (dataset upload, params, training, export).
+- **frontend/src/api.js**: API calls to backend for workflow CRUD.
+- **frontend/src/store.js**: Redux store setup and state management.
+- **frontend/src/validation.js**: Input validation utilities.
+- **frontend/src/wireframes.md**: UI wireframes and layout sketches.
+
+---
+
+For more details, see in-line code comments and the [agent_manifest.md](agent_manifest.md) for planned features and architecture.
 - `smolvlm2_wrapper/agent_text.py` — Text agent logic
 - `smolvlm2_wrapper/agent_image.py` — Image agent logic
 - `smolvlm2_wrapper/agent_video.py` — Video agent logic
@@ -313,9 +374,7 @@ img = crop(img, left=0, top=0, right=200, bottom=200)
 img = rotate(img, angle=90, expand=True)
 img = flip(img, direction="horizontal")  # or "vertical"
 img = sharpen(img, radius=2.0, percent=150, threshold=3)
-img = blur(img, radius=2.0)
 img = adjust_brightness(img, factor=1.3)   # >1 = brighter
-img = adjust_contrast(img, factor=1.2)    # >1 = more contrast
 img = adjust_saturation(img, factor=0.0)  # 0 = greyscale, 1 = unchanged
 img = apply_filter(img, name="edge_enhance")
      # names: edge_enhance, emboss, find_edges, smooth, detail, contour
@@ -327,12 +386,10 @@ img = denoise(img, size=3)               # median filter
 
 ---
 
-### Masking
 
 ```python
 from smolvlm2_wrapper.image.mask import *
 
-mask = create_mask(width, height, fill=0)       # blank mask
 mask = create_rect_mask(w, h, (left, top, right, bottom))
 mask = create_circular_mask(w, h, center=(cx, cy), radius=r)
 mask = mask_from_color(img, target_color=(R, G, B), tolerance=30)
@@ -370,15 +427,12 @@ descriptive context that can be consumed by a downstream generative model.
 ### ImageProcessor (chainable)
 
 ```python
-from smolvlm2_wrapper import SmolVLM2Wrapper, ImageProcessor
 
 proc = ImageProcessor(model=SmolVLM2Wrapper())   # model is optional
 
 result = (
     proc
-    .load("photo.jpg")            # or .set_image(pil_img)
     .resize(1024, 768)
-    .sharpen(radius=2, percent=150)
     .adjust_brightness(1.1)
     .adjust_contrast(1.2)
     .adjust_saturation(0.9)
@@ -390,28 +444,14 @@ result = (
     .rotate(10)
     .convert("L")                 # greyscale
     .add_noise(std=5)
-    .apply_mask(mask)             # mask from mask module
     .inpaint(mask)
     .outpaint((50, 50, 50, 50))
     .heal(blemish_mask)
     .save("output.jpg")           # returns pathlib.Path
-)
 
 # model-powered methods (require model=...)
 caption  = proc.load("photo.jpg").caption(style="detailed")
-answer   = proc.load("photo.jpg").describe("What is the dominant colour?")
-enhanced = proc.load("photo.jpg").enhance_prompt("a beach scene")
 
-# clone for parallel branches
-branch_a = proc.clone().sharpen()
-branch_b = proc.clone().blur()
-```
-
----
-
-### Video manipulation
-
-```python
 from smolvlm2_wrapper.video.manipulation import *
 from smolvlm2_wrapper.video.utils import sample_frames, frames_to_gif, add_audio
 

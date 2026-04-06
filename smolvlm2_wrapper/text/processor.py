@@ -32,8 +32,9 @@ from smolvlm2_wrapper.text.prompts import (
     STYLE_PROMPTS,
 )
 
-from extrovert_agent import ExtrovertAgent
-from enums import AgentStatus
+import importlib
+ExtrovertAgent = importlib.import_module('vaultwares-agentciation.extrovert_agent').ExtrovertAgent
+AgentStatus = importlib.import_module('vaultwares-agentciation.enums').AgentStatus
 
 logger = logging.getLogger(__name__)
 
