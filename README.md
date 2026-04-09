@@ -45,6 +45,51 @@ A modular platform for text, image, and video generation/editing using AI agents
 
 ---
 
+## Starting the API Server (FastAPI)
+
+You can run the API server using the provided `api_server.py` file. This will start a FastAPI server exposing all workflow endpoints.
+
+### 1. Install dependencies (if not already done):
+```bash
+pip install -r requirements.txt
+```
+
+### 2. (Recommended) Activate your virtual environment:
+```bash
+# Windows:
+.venv\Scripts\activate
+# Linux/macOS:
+source .venv/bin/activate
+```
+
+### 3. Start the API server:
+```bash
+python api_server.py
+```
+
+- By default, the server will run on `http://127.0.0.1:8001`.
+- The OpenAPI/Swagger UI will be available at `http://127.0.0.1:8001/docs`.
+
+**Note:** You can now run the API server directly with `python api_server.py` (no extra arguments needed) thanks to the new script entrypoint. For production or advanced usage, you can still use `uvicorn` directly:
+```bash
+pip install uvicorn
+uvicorn api_server:app --host 0.0.0.0 --port 8001 --reload
+```
+
+---
+
+## API Homepage & Branding
+
+When you visit `http://127.0.0.1:8001/` (or your configured API host/port), you'll see a branded Vaultwares Pipelines homepage with:
+- A stylized Vaultwares graphic
+- A link to the main frontend dashboard (placeholder URL)
+- A link to register for an API key (placeholder URL)
+- A link to the API docs (`/docs`)
+
+You can customize the URLs for the dashboard and API key registration in `api_server.py` by editing the `FRONTEND_URL` and `API_KEY_REG_URL` variables.
+
+---
+
 ## Module Documentation
 
 ### Backend Modules
@@ -125,8 +170,8 @@ Pull requests and issues are welcome!
 │  ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌──────────┐  │
 │  │   core/    │  │  image/    │  │  video/    │  │  text/   │  │
 │  │ model base │  │manipulation│  │manipulation│  │prompts & │  │
-│  │ SmolVLM2   │  │ mask       │  │ utils      │  │processor │  │
-│  │ config     │  │ inpaint    │  │ processor  │  │          │  │
+│  │ SmolVLM2   │  │ inpaint    │  │ processor  │  │processor │  │
+│  │ config     │  │ utils      │  │ processor  │  │          │  │
 │  └────────────┘  └────────────┘  └────────────┘  └──────────┘  │
 │  ┌──────────────────────────────────────────┐  ┌────────────┐   │
 │  │         workflows/                       │  │  utils/    │   │
@@ -883,4 +928,3 @@ examples/
     03_video_processing.py
     04_prompt_generation.py
     05_workflows.py
-```

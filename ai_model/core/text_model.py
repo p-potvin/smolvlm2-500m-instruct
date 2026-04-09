@@ -69,7 +69,7 @@ class TextModelWrapper(BaseModelWrapper):
     def _load_model(self) -> None:
         """Load the AutoTokenizer and AutoModelForCausalLM or multimodal model from HuggingFace."""
         import torch
-        from transformers import AutoTokenizer, AutoModelForCausalLM, AutoProcessor, AutoModelForVision2Seq
+        from transformers import AutoTokenizer, AutoModelForCausalLM, AutoProcessor
 
         dtype_map = {
             "float16": torch.float16,
@@ -203,7 +203,12 @@ class TextModelWrapper(BaseModelWrapper):
                 "comma-separated keywords."
             ),
         }
-        prompt = style_prompts.get(style, style_prompts["detailed"])
+        
+        if style in style_prompts:
+            prompt = style_prompts[style]
+        else:   
+            prompt = style_prompts.get(style, style_prompts["detailed"])  # default to "detailed"
+    
         return self.generate(prompt, images=[image], **kwargs)
 
     def answer_question(
