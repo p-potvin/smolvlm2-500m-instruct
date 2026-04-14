@@ -20,8 +20,8 @@ source .venv/bin/activate
 python api_server.py
 ```
 
-- By default, the server will run on `http://127.0.0.1:8000`.
-- The OpenAPI/Swagger UI will be available at `http://127.0.0.1:8000/docs`.
+- By default, the server will run on `http://127.0.0.1:9001`.
+- The OpenAPI/Swagger UI will be available at `http://127.0.0.1:9001/docs`.
 - You can configure CORS, authentication, and other settings via environment variables (see top of `api_server.py`).
 
 ---
@@ -29,7 +29,7 @@ python api_server.py
 **Note:** If you want to run the API with production features (e.g., hot reload, multiple workers), you can use `uvicorn`:
 ```bash
 pip install uvicorn
-uvicorn api_server:app --reload
+uvicorn api_server:app --reload --port 9001
 ```
 
 ---

@@ -4,23 +4,29 @@
 ## Overview
 A modular platform for text, image, and video generation/editing using AI agents, with workflow orchestration, compliance, and a Gradio-based GUI.
 
-## Features
+## Setup
 
-
-## Quickstart
-
-### Backend (Python/Gradio GUI)
 1. Install dependencies:
-    ```bash
+    ```sh
     pip install -r requirements.txt
     ```
-2. (Recommended) Create and activate a virtual environment:
-    ```bash
-    python -m venv .venv
-    # Windows:
-    .venv\Scripts\activate
-    # Linux/macOS:
-    source .venv/bin/activate
+
+2. Configure environment variables securely:
+    - Copy the provided `.env` template or create a `.env` file in the project root:
+      ```env
+      DB_URL=postgres://postgres:postgres@localhost:5432/vaultwares
+      MODELS_DIR=D:/comfyui/resources/comfyui/models
+      ```
+    - Never commit secrets or sensitive paths to version control.
+
+3. Set up your database:
+    - Create a PostgreSQL database named `vaultwares` (or use your own connection string)
+    - The script will auto-create the `ai_models` table if it does not exist.
+
+4. Run the model discovery script:
+    ```sh
+    python scripts/discover_models.py
+    ```
     ```
 3. Run the Gradio GUI locally:
     ```bash
