@@ -16,3 +16,11 @@ frontend/test-results/
 frontend/test-coverage/
 frontend/playwright-report/data/
 *.log
+node_modules/
+.npm-cache/
+app/generated-prisma-client/
+.env
+.env.*
+!.env.example
+.env.example
+.omx
