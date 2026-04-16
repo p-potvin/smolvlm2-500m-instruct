@@ -1,7 +1,7 @@
 
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.responses import HTMLResponse
 import os
 import json
@@ -9,12 +9,19 @@ from threading import Lock
 from pydantic import BaseModel, Field
 from typing import List, Optional
 from uuid import uuid4
+import hashlib
+import time
+from collections import defaultdict, deque
+import ipaddress
+import secrets
 
 import asyncio
 from dotenv import load_dotenv
-from db import init_db, close_db
+from db import init_db, close_db, UserAccount, ApiKey
 from tortoise import Tortoise
 import logging
+from jose import jwt, JWTError
+from passlib.context import CryptContext
 
 # Load .env before reading environment-backed settings.
 load_dotenv()
@@ -22,6 +29,60 @@ load_dotenv()
 # --- Configurable Settings ---
 AUTH_ENABLED = os.environ.get("AUTH_ENABLED", "1") == "1"
 DEFAULT_MODELS_DIR = os.environ.get("DEFAULT_MODELS_DIR") or os.environ.get("MODELS_DIR")
+
+JWT_SECRET = os.environ.get("JWT_SECRET", "")
+JWT_ISSUER = os.environ.get("JWT_ISSUER", "vaultwares-pipelines")
+JWT_AUDIENCE = os.environ.get("JWT_AUDIENCE", "vaultwares")
+JWT_TTL_SECONDS = int(os.environ.get("JWT_TTL_SECONDS", "900"))
+API_KEY_PEPPER = os.environ.get("API_KEY_PEPPER") or JWT_SECRET
+
+BOOTSTRAP_ADMIN_USERNAME = os.environ.get("BOOTSTRAP_ADMIN_USERNAME", "")
+BOOTSTRAP_ADMIN_PASSWORD = os.environ.get("BOOTSTRAP_ADMIN_PASSWORD", "")
+BOOTSTRAP_ADMIN_IS_DISABLED = os.environ.get("BOOTSTRAP_ADMIN_IS_DISABLED", "0") == "1"
+
+REQUIRE_HTTPS = os.environ.get("REQUIRE_HTTPS", "1") == "1"
+ALLOW_HTTP_TRUSTED = os.environ.get("ALLOW_HTTP_TRUSTED", "1") == "1"
+
+# Exact origins only by default (no wildcards). Use stable Vercel alias domains.
+ALLOWED_ORIGINS = set(
+    origin.strip()
+    for origin in os.environ.get("ALLOWED_ORIGINS", "").split(",")
+    if origin.strip()
+)
+
+TAILSCALE_CIDRS = [
+    cidr.strip()
+    for cidr in os.environ.get("TAILSCALE_CIDRS", "100.64.0.0/10,fd7a:115c:a1e0::/48").split(",")
+    if cidr.strip()
+]
+_tailscale_networks = []
+for _cidr in TAILSCALE_CIDRS:
+    try:
+        _tailscale_networks.append(ipaddress.ip_network(_cidr, strict=False))
+    except ValueError:
+        # Ignore invalid CIDRs to avoid startup hard-fail; the API will treat the network as untrusted.
+        pass
+
+TRUSTED_PROXY_CIDRS = [
+    cidr.strip()
+    for cidr in os.environ.get("TRUSTED_PROXY_CIDRS", "127.0.0.1/32,::1/128").split(",")
+    if cidr.strip()
+]
+_trusted_proxy_networks = []
+for _cidr in TRUSTED_PROXY_CIDRS:
+    try:
+        _trusted_proxy_networks.append(ipaddress.ip_network(_cidr, strict=False))
+    except ValueError:
+        pass
+
+RATE_LIMIT_ENABLED = os.environ.get("RATE_LIMIT_ENABLED", "1") == "1"
+RATE_LIMIT_WINDOW_SECONDS = int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "60"))
+RATE_LIMIT_MAX_PUBLIC = int(os.environ.get("RATE_LIMIT_MAX_PUBLIC", "120"))
+RATE_LIMIT_MAX_TRUSTED = int(os.environ.get("RATE_LIMIT_MAX_TRUSTED", "1200"))
+MAINTENANCE_MODE = os.environ.get("MAINTENANCE_MODE", "0") == "1"
+
+GATEWAY_REQUIRED_PUBLIC = os.environ.get("GATEWAY_REQUIRED_PUBLIC", "1") == "1"
+GATEWAY_SHARED_SECRET = os.environ.get("GATEWAY_SHARED_SECRET", "")
 
 
 # --- Logging Setup ---
@@ -31,29 +92,190 @@ logger = logging.getLogger("vaultwares.api")
 app = FastAPI(title="Vaultwares Workflow API", description="API for managing workflows, favorites, backup, NIM integration, and storage.", version="0.2.0")
 
 # --- CORS ---
-CORS_ORIGINS = os.environ.get(
-    "CORS_ORIGINS",
-    "http://localhost:5173,http://localhost:4173"
-).split(",")
+CORS_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get("CORS_ORIGINS", "http://localhost:5173,http://localhost:4173").split(",")
+    if origin.strip()
+]
+_cors_allow_origins = sorted(set(CORS_ORIGINS) | ALLOWED_ORIGINS) if (CORS_ORIGINS or ALLOWED_ORIGINS) else []
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=CORS_ORIGINS,
+    allow_origins=_cors_allow_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-security = HTTPBasic(auto_error=False)
+bearer_scheme = HTTPBearer(auto_error=False)
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-def check_auth(credentials: Optional[HTTPBasicCredentials] = Depends(security)):
+def _is_trusted_client_ip(ip: Optional[str]) -> bool:
+    if not ip:
+        return False
+    if ip == "::1" or ip.startswith("127."):
+        return True
+    try:
+        ip_obj = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    for net in _tailscale_networks:
+        if ip_obj in net:
+            return True
+    return False
+
+def _effective_scheme(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-proto")
+    if forwarded:
+        return forwarded.split(",")[0].strip().lower()
+    return request.url.scheme.lower()
+
+def _get_client_ip(request: Request) -> Optional[str]:
+    """
+    Uses X-Forwarded-For only when the immediate peer is a trusted proxy.
+    This prevents public callers from spoofing their source IP.
+    """
+    peer_ip = request.client.host if request.client else None
+    if not peer_ip:
+        return None
+    try:
+        peer_obj = ipaddress.ip_address(peer_ip)
+    except ValueError:
+        return peer_ip
+
+    is_trusted_proxy = any(peer_obj in net for net in _trusted_proxy_networks)
+    if not is_trusted_proxy:
+        return peer_ip
+
+    xff = request.headers.get("x-forwarded-for", "")
+    if not xff:
+        return peer_ip
+    # Use first hop (original client)
+    first = xff.split(",")[0].strip()
+    return first or peer_ip
+
+def _origin_allowed(origin: str) -> bool:
+    if not origin:
+        return False
+    if origin in ALLOWED_ORIGINS:
+        return True
+    if origin in _cors_allow_origins:
+        return True
+    return False
+
+def _hash_api_key(raw_key: str) -> str:
+    if not raw_key:
+        return ""
+    if not API_KEY_PEPPER:
+        raise HTTPException(status_code=500, detail="API key pepper is not configured")
+    return hashlib.sha256((API_KEY_PEPPER + raw_key).encode("utf-8")).hexdigest()
+
+def _create_access_token(user_id: int, username: str, is_admin: bool) -> str:
+    if not JWT_SECRET:
+        raise HTTPException(status_code=500, detail="JWT secret is not configured")
+    now = int(time.time())
+    payload = {
+        "iss": JWT_ISSUER,
+        "aud": JWT_AUDIENCE,
+        "iat": now,
+        "nbf": now,
+        "exp": now + max(60, JWT_TTL_SECONDS),
+        "sub": f"user:{user_id}",
+        "uid": user_id,
+        "usr": username,
+        "adm": bool(is_admin),
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+async def _get_user_from_token(token: str) -> UserAccount:
+    if not JWT_SECRET:
+        raise HTTPException(status_code=500, detail="JWT secret is not configured")
+    try:
+        payload = jwt.decode(
+            token,
+            JWT_SECRET,
+            algorithms=["HS256"],
+            audience=JWT_AUDIENCE,
+            issuer=JWT_ISSUER,
+        )
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    user_id = payload.get("uid")
+    if not isinstance(user_id, int):
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    user = await UserAccount.get_or_none(id=user_id)
+    if not user or user.is_disabled:
+        raise HTTPException(status_code=401, detail="Account disabled")
+    return user
+
+async def require_auth(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+):
     if not AUTH_ENABLED:
-        return
-    if credentials is None:
-        raise HTTPException(status_code=401, detail="Missing credentials")
-    # Placeholder: Replace with real user/pass check
-    if credentials.username != "admin" or credentials.password != "admin":
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+        return {"kind": "anonymous"}
+
+    client_ip = _get_client_ip(request)
+    is_trusted_ip = _is_trusted_client_ip(client_ip)
+
+    token = credentials.credentials if credentials else None
+    if token:
+        user = await _get_user_from_token(token)
+        return {"kind": "user", "user": user}
+
+    api_key = request.headers.get("x-api-key", "")
+    if api_key and is_trusted_ip:
+        key_hash = _hash_api_key(api_key)
+        key_row = await ApiKey.get_or_none(key_hash=key_hash)
+        if not key_row or key_row.is_revoked:
+            raise HTTPException(status_code=401, detail="Invalid API key")
+        return {"kind": "api_key", "api_key": key_row}
+
+    raise HTTPException(status_code=401, detail="Missing credentials")
+
+_rate_state = defaultdict(lambda: deque())
+
+@app.middleware("http")
+async def gate_requests(request: Request, call_next):
+    client_ip = _get_client_ip(request) or ""
+    is_trusted_ip = _is_trusted_client_ip(client_ip)
+
+    if MAINTENANCE_MODE and not is_trusted_ip:
+        raise HTTPException(status_code=503, detail="Temporarily unavailable")
+
+    scheme = _effective_scheme(request)
+    if REQUIRE_HTTPS and scheme != "https" and not (ALLOW_HTTP_TRUSTED and is_trusted_ip):
+        raise HTTPException(status_code=426, detail="HTTPS required")
+
+    origin = request.headers.get("origin", "")
+    if not is_trusted_ip:
+        if GATEWAY_REQUIRED_PUBLIC:
+            if not GATEWAY_SHARED_SECRET:
+                raise HTTPException(status_code=500, detail="Gateway secret is not configured")
+            provided = request.headers.get("x-vw-gateway-secret", "")
+            if not secrets.compare_digest(provided, GATEWAY_SHARED_SECRET):
+                raise HTTPException(status_code=403, detail="Forbidden source")
+
+        if origin:
+            if not _origin_allowed(origin):
+                raise HTTPException(status_code=403, detail="Forbidden origin")
+        else:
+            raise HTTPException(status_code=403, detail="Forbidden source")
+
+    if RATE_LIMIT_ENABLED:
+        now = time.time()
+        key = f"{client_ip}:{origin}" if origin else client_ip
+        bucket = _rate_state[key]
+        while bucket and (now - bucket[0]) > RATE_LIMIT_WINDOW_SECONDS:
+            bucket.popleft()
+        limit = RATE_LIMIT_MAX_TRUSTED if is_trusted_ip else RATE_LIMIT_MAX_PUBLIC
+        if len(bucket) >= limit:
+            raise HTTPException(status_code=429, detail="Rate limit exceeded")
+        bucket.append(now)
+
+    return await call_next(request)
 
 # --- Models ---
 class Workflow(BaseModel):
@@ -129,6 +351,27 @@ class ModelsDirRequest(BaseModel):
     dir_path: Optional[str] = None
     models_dir: Optional[str] = None
     modelsDir: Optional[str] = None
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+class LoginResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int
+
+class MeResponse(BaseModel):
+    username: str
+    is_admin: bool = False
+
+class ApiKeyCreateRequest(BaseModel):
+    name: Optional[str] = None
+    scopes: Optional[list[str]] = None
+
+class ApiKeyCreateResponse(BaseModel):
+    api_key: str
+    name: Optional[str] = None
 
 # --- Persistent JSON Storage ---
 VAULTWARES_HOME_CSS = """
@@ -347,6 +590,18 @@ async def startup_event():
         await init_db(DB_URL)
         _tortoise_initialized = True
         logger.info("Tortoise ORM initialized successfully.")
+
+        # Optional bootstrap for initial setup. Use only on trusted networks.
+        if BOOTSTRAP_ADMIN_USERNAME and BOOTSTRAP_ADMIN_PASSWORD:
+            existing = await UserAccount.get_or_none(username=BOOTSTRAP_ADMIN_USERNAME)
+            if not existing:
+                await UserAccount.create(
+                    username=BOOTSTRAP_ADMIN_USERNAME,
+                    password_hash=pwd_context.hash(BOOTSTRAP_ADMIN_PASSWORD),
+                    is_admin=True,
+                    is_disabled=BOOTSTRAP_ADMIN_IS_DISABLED,
+                )
+                logger.info("Bootstrapped initial admin user.")
     except Exception as e:
         logger.error(f"Failed to initialize Tortoise ORM: {e}")
         _tortoise_initialized = False
@@ -365,8 +620,55 @@ async def shutdown_event():
 def db_available() -> bool:
     return bool(_tortoise_initialized and Tortoise._inited)
 
+@app.post("/auth/login", response_model=LoginResponse)
+async def login(payload: LoginRequest, request: Request):
+    if not AUTH_ENABLED:
+        raise HTTPException(status_code=400, detail="Auth is disabled")
+    if not db_available():
+        raise HTTPException(status_code=503, detail="Database unavailable")
+
+    client_ip = _get_client_ip(request)
+    if not _is_trusted_client_ip(client_ip):
+        # Public internet is browser-origin gated by middleware; this is a last defense-in-depth check.
+        origin = request.headers.get("origin", "")
+        if not origin or not _origin_allowed(origin):
+            raise HTTPException(status_code=403, detail="Forbidden source")
+
+    user = await UserAccount.get_or_none(username=payload.username)
+    if not user or user.is_disabled:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    if not pwd_context.verify(payload.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    token = _create_access_token(user.id, user.username, bool(user.is_admin))
+    return LoginResponse(access_token=token, expires_in=max(60, JWT_TTL_SECONDS))
+
+@app.get("/auth/me", response_model=MeResponse)
+async def me(principal=Depends(require_auth)):
+    if principal.get("kind") != "user":
+        raise HTTPException(status_code=401, detail="User token required")
+    user: UserAccount = principal["user"]
+    return MeResponse(username=user.username, is_admin=bool(user.is_admin))
+
+@app.post("/auth/api-keys", response_model=ApiKeyCreateResponse)
+async def create_api_key(request: Request, payload: ApiKeyCreateRequest, principal=Depends(require_auth)):
+    if principal.get("kind") != "user":
+        raise HTTPException(status_code=401, detail="User token required")
+    user: UserAccount = principal["user"]
+    if not user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin required")
+
+    client_ip = _get_client_ip(request)
+    if not _is_trusted_client_ip(client_ip):
+        raise HTTPException(status_code=403, detail="Trusted network required")
+
+    raw_key = "vwk_" + secrets.token_urlsafe(32)
+    key_hash = _hash_api_key(raw_key)
+    await ApiKey.create(name=payload.name, key_hash=key_hash, scopes=payload.scopes or [])
+    return ApiKeyCreateResponse(api_key=raw_key, name=payload.name)
+
 @app.get("/workflows", response_model=List[Workflow])
-async def list_workflows(credentials: HTTPBasicCredentials = Depends(check_auth)):
+async def list_workflows(_principal=Depends(require_auth)):
     if db_available():
         workflows = await WorkflowDB.all()
         return [workflowdb_to_pydantic(wf) for wf in workflows]
@@ -374,7 +676,7 @@ async def list_workflows(credentials: HTTPBasicCredentials = Depends(check_auth)
 
 
 @app.post("/workflows", response_model=Workflow)
-async def create_workflow(wf: WorkflowCreateRequest, credentials: HTTPBasicCredentials = Depends(check_auth)):
+async def create_workflow(wf: WorkflowCreateRequest, _principal=Depends(require_auth)):
     workflow_id = wf.id or _next_workflow_id()
     pin_value = _workflow_pin_value(wf.pin, wf.pinned)
     created = Workflow(
@@ -407,7 +709,7 @@ async def create_workflow(wf: WorkflowCreateRequest, credentials: HTTPBasicCrede
 
 
 @app.put("/workflows/{id}", response_model=Workflow)
-async def update_workflow(id: str, wf: WorkflowUpdateRequest, credentials: HTTPBasicCredentials = Depends(check_auth)):
+async def update_workflow(id: str, wf: WorkflowUpdateRequest, _principal=Depends(require_auth)):
     if db_available():
         try:
             obj = await WorkflowDB.get(id=id)
@@ -450,7 +752,7 @@ async def update_workflow(id: str, wf: WorkflowUpdateRequest, credentials: HTTPB
 
 
 @app.delete("/workflows/{id}")
-async def delete_workflow(id: str, credentials: HTTPBasicCredentials = Depends(check_auth)):
+async def delete_workflow(id: str, _principal=Depends(require_auth)):
     if db_available():
         deleted = await WorkflowDB.filter(id=id).delete()
         if not deleted:
@@ -466,7 +768,7 @@ async def delete_workflow(id: str, credentials: HTTPBasicCredentials = Depends(c
 
 
 @app.post("/workflows/export")
-async def export_workflows(req: WorkflowsExportRequest, credentials: HTTPBasicCredentials = Depends(check_auth)):
+async def export_workflows(req: WorkflowsExportRequest, _principal=Depends(require_auth)):
     if db_available():
         workflows = await WorkflowDB.filter(id__in=req.ids)
         return [workflowdb_to_pydantic(wf) for wf in workflows]
@@ -478,7 +780,7 @@ async def export_workflows(req: WorkflowsExportRequest, credentials: HTTPBasicCr
 
 
 @app.post("/workflows/backup")
-async def backup_workflows(_: WorkflowsBackupRequest, credentials: HTTPBasicCredentials = Depends(check_auth)):
+async def backup_workflows(_: WorkflowsBackupRequest, _principal=Depends(require_auth)):
     if db_available():
         workflows = await WorkflowDB.all()
         return [workflowdb_to_pydantic(wf) for wf in workflows]
@@ -486,7 +788,7 @@ async def backup_workflows(_: WorkflowsBackupRequest, credentials: HTTPBasicCred
 
 
 @app.post("/workflows/restore")
-async def restore_workflows(req: WorkflowsRestoreRequest, credentials: HTTPBasicCredentials = Depends(check_auth)):
+async def restore_workflows(req: WorkflowsRestoreRequest, _principal=Depends(require_auth)):
     items = req.data
     if isinstance(items, dict):
         candidate = items.get("workflows", [])
@@ -515,7 +817,7 @@ async def restore_workflows(req: WorkflowsRestoreRequest, credentials: HTTPBasic
 
 
 @app.post("/workflows/pin")
-async def pin_workflow(req: WorkflowPinRequest, credentials: HTTPBasicCredentials = Depends(check_auth)):
+async def pin_workflow(req: WorkflowPinRequest, _principal=Depends(require_auth)):
     if db_available():
         try:
             obj = await WorkflowDB.get(id=req.id)
@@ -537,7 +839,7 @@ async def pin_workflow(req: WorkflowPinRequest, credentials: HTTPBasicCredential
 
 
 @app.post("/workflows/favorite")
-async def favorite_workflow(req: WorkflowFavoriteRequest, credentials: HTTPBasicCredentials = Depends(check_auth)):
+async def favorite_workflow(req: WorkflowFavoriteRequest, _principal=Depends(require_auth)):
     if db_available():
         try:
             obj = await WorkflowDB.get(id=req.id)
@@ -559,7 +861,7 @@ async def favorite_workflow(req: WorkflowFavoriteRequest, credentials: HTTPBasic
 
 
 @app.post("/workflows/run")
-async def run_workflow(req: WorkflowRunRequest, credentials: HTTPBasicCredentials = Depends(check_auth)):
+async def run_workflow(req: WorkflowRunRequest, _principal=Depends(require_auth)):
     if db_available():
         try:
             await WorkflowDB.get(id=req.id)
@@ -576,32 +878,32 @@ async def run_workflow(req: WorkflowRunRequest, credentials: HTTPBasicCredential
 
 # --- Persistent Storage Placeholders ---
 @app.post("/storage/google-drive/upload")
-def upload_google_drive(credentials: HTTPBasicCredentials = Depends(check_auth)):
+def upload_google_drive(_principal=Depends(require_auth)):
     # Placeholder for Google Drive upload
     return {"status": "placeholder", "message": "Google Drive upload not implemented."}
 
 @app.post("/storage/dropbox/upload")
-def upload_dropbox(credentials: HTTPBasicCredentials = Depends(check_auth)):
+def upload_dropbox(_principal=Depends(require_auth)):
     # Placeholder for Dropbox upload
     return {"status": "placeholder", "message": "Dropbox upload not implemented."}
 
 @app.post("/storage/icloud/upload")
-def upload_icloud(credentials: HTTPBasicCredentials = Depends(check_auth)):
+def upload_icloud(_principal=Depends(require_auth)):
     # Placeholder for iCloud upload
     return {"status": "placeholder", "message": "iCloud upload not implemented."}
 
 @app.post("/storage/other/upload")
-def upload_other(credentials: HTTPBasicCredentials = Depends(check_auth)):
+def upload_other(_principal=Depends(require_auth)):
     # Placeholder for other storage providers
     return {"status": "placeholder", "message": "Other storage provider upload not implemented."}
 
 # --- App Config ---
 @app.get("/config")
-def get_config(credentials: HTTPBasicCredentials = Depends(check_auth)):
+def get_config(_principal=Depends(require_auth)):
     return APP_CONFIG
 
 @app.post("/config")
-def update_config(req: ConfigUpdateRequest, credentials: HTTPBasicCredentials = Depends(check_auth)):
+def update_config(req: ConfigUpdateRequest, _principal=Depends(require_auth)):
     payload = req.model_dump(exclude_none=True)
     APP_CONFIG.update(payload)
     if "modelsDir" in payload:
@@ -611,12 +913,12 @@ def update_config(req: ConfigUpdateRequest, credentials: HTTPBasicCredentials = 
 
 # --- Models Directory Config ---
 @app.get("/config/models-dir")
-def get_models_dir(credentials: HTTPBasicCredentials = Depends(check_auth)):
+def get_models_dir(_principal=Depends(require_auth)):
     value = APP_CONFIG.get("modelsDir") or DEFAULT_MODELS_DIR or ""
     return {"models_dir": value, "dir_path": value, "modelsDir": value}
 
 @app.post("/config/models-dir")
-def set_models_dir(req: ModelsDirRequest, credentials: HTTPBasicCredentials = Depends(check_auth)):
+def set_models_dir(req: ModelsDirRequest, _principal=Depends(require_auth)):
     global DEFAULT_MODELS_DIR
     resolved = req.dir_path or req.models_dir or req.modelsDir
     if resolved is None:

@@ -1,0 +1,25 @@
+# Example Caddy config for real TLS + strict HTTPS.
+#
+# 1) Point DNS: api.yourdomain.com -> your home IP (or DDNS).
+# 2) Forward ports 80/443 to this machine.
+# 3) Run Caddy as a service.
+#
+# Notes:
+# - Caddy obtains/renews Let's Encrypt certs automatically.
+# - FastAPI runs on loopback (127.0.0.1:9001) and Caddy terminates TLS.
+# - Caddy sets X-Forwarded-Proto=https which the API uses for HTTPS enforcement.
+
+api.yourdomain.com {
+	encode zstd gzip
+
+	# HSTS (only enable once you're confident HTTPS is stable)
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+
+	# Optional hardening headers
+	header X-Content-Type-Options "nosniff"
+	header X-Frame-Options "DENY"
+	header Referrer-Policy "no-referrer"
+
+	reverse_proxy 127.0.0.1:9001
+}
+

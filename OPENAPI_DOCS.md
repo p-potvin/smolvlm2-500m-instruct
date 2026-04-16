@@ -2,8 +2,8 @@
 
 The backend API is now served using FastAPI. You can access the auto-generated OpenAPI and Swagger UI docs at:
 
-- Swagger UI: [http://localhost:8000/docs](http://localhost:8000/docs)
-- OpenAPI JSON: [http://localhost:8000/openapi.json](http://localhost:8000/openapi.json)
+- Swagger UI: [http://localhost:9001/docs](http://localhost:9001/docs) (default `python api_server.py`)
+- OpenAPI JSON: [http://localhost:9001/openapi.json](http://localhost:9001/openapi.json)
 
 ## How to Run the API Server
 
@@ -13,9 +13,9 @@ The backend API is now served using FastAPI. You can access the auto-generated O
    ```
 2. Start the API server:
    ```bash
-   uvicorn api_server:app --reload
+   python api_server.py
    ```
-3. Visit [http://localhost:8000/docs](http://localhost:8000/docs) in your browser to view and interact with the API docs.
+3. Visit [http://localhost:9001/docs](http://localhost:9001/docs) in your browser to view and interact with the API docs.
 
 ## Endpoints Implemented
 - `GET /workflows` — List workflows

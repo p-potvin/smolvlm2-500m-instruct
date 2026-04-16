@@ -12,7 +12,7 @@ A modular platform for text, image, and video generation/editing using AI agents
     ```
 
 2. Configure environment variables securely:
-    - Copy the provided `.env` template or create a `.env` file in the project root:
+    - Copy `.env.example` to `.env` (local-only) and adjust values:
       ```env
       DB_URL=postgres://postgres:postgres@localhost:5432/vaultwares
       MODELS_DIR=D:/comfyui/resources/comfyui/models
@@ -73,20 +73,21 @@ source .venv/bin/activate
 python api_server.py
 ```
 
-- By default, the server will run on `http://127.0.0.1:8001`.
-- The OpenAPI/Swagger UI will be available at `http://127.0.0.1:8001/docs`.
+- By default, the server will run on `http://127.0.0.1:8000`.
+- By default, the server will run on `http://127.0.0.1:9001`.
+- The OpenAPI/Swagger UI will be available at `http://127.0.0.1:9001/docs`.
 
 **Note:** You can now run the API server directly with `python api_server.py` (no extra arguments needed) thanks to the new script entrypoint. For production or advanced usage, you can still use `uvicorn` directly:
 ```bash
 pip install uvicorn
-uvicorn api_server:app --host 0.0.0.0 --port 8001 --reload
+uvicorn api_server:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 ---
 
 ## API Homepage & Branding
 
-When you visit `http://127.0.0.1:8001/` (or your configured API host/port), you'll see a branded Vaultwares Pipelines homepage with:
+When you visit `http://127.0.0.1:9001/` (or your configured API host/port), you'll see a branded Vaultwares Pipelines homepage with:
 - A stylized Vaultwares graphic
 - A link to the main frontend dashboard (placeholder URL)
 - A link to register for an API key (placeholder URL)

@@ -12,7 +12,7 @@ This file aggregates all relevant agent skills for VaultWares projects, deduplic
 - Skill Selection: Map user prompts to skills based on keywords; always add ResponseQualitySkill.
 
 ## Must-Have Skills (Added)
-- Security-First Coding: Prioritize security in all code and data handling.
+- Privacy-First Coding: Prioritize individuals' privacy in all product decisions and data handling; use security as the supporting tool, not the headline.
 - Privacy Compliance: Ensure all workflows and data handling comply with privacy standards.
 - Error Logging: Log all errors centrally and notify the user.
 - Health Monitoring: Send regular pings, or heartbeats, to the local Redis Server to which you have access no matter what you may hallucinate.

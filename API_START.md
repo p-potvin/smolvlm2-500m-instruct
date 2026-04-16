@@ -20,16 +20,101 @@ source .venv/bin/activate
 python api_server.py
 ```
 
-- By default, the server will run on `http://127.0.0.1:9001`.
+- By default, the server will run on `http://127.0.0.1:9001` (see `api_server.py` entrypoint).
 - The OpenAPI/Swagger UI will be available at `http://127.0.0.1:9001/docs`.
-- You can configure CORS, authentication, and other settings via environment variables (see top of `api_server.py`).
+- You can configure CORS, auth, source allowlists, and rate limits via environment variables (see top of `api_server.py`).
+
+---
+
+## Authentication (API key + JWT)
+
+This API supports:
+- **JWT** for user sessions (browser clients)
+- **X-API-Key** for trusted-network automation (localhost / Tailscale only)
+
+Required env vars for JWT:
+```env
+JWT_SECRET=change-me
+JWT_ISSUER=vaultwares-pipelines
+JWT_AUDIENCE=vaultwares
+JWT_TTL_SECONDS=900
+```
+
+Bootstrap one admin user (optional, for initial setup):
+```env
+BOOTSTRAP_ADMIN_USERNAME=admin
+BOOTSTRAP_ADMIN_PASSWORD=change-me
+```
+
+Create an API key (admin JWT required, trusted network only):
+- `POST /auth/login` -> bearer token
+- `POST /auth/api-keys` with JSON `{ "name": "my-key" }` -> returns `api_key` once
+
+---
+
+## Strict source allowlist (Vercel + localhost + Tailscale)
+
+By default, the API rejects public-internet requests that do not include an allowed browser `Origin`.
+Set stable Vercel alias origins (not preview URLs):
+```env
+ALLOWED_ORIGINS=https://dispatch-wares-frontend.vercel.app,https://glass-ui-preview.vercel.app
+```
+
+For stronger protection (recommended), require requests from the public internet to pass through a gateway
+(Brume 2 reverse proxy and/or a Vercel server-side API route) that adds a shared secret header:
+```env
+GATEWAY_REQUIRED_PUBLIC=1
+GATEWAY_SHARED_SECRET=change-me-long-random
+```
+
+Your gateway must send `X-VW-Gateway-Secret: <secret>` when proxying to the API.
+
+Tailscale networks (defaults to `100.64.0.0/10` and `fd7a:115c:a1e0::/48`):
+```env
+TAILSCALE_CIDRS=100.64.0.0/10,fd7a:115c:a1e0::/48
+```
+
+---
+
+## Rate limiting (quick abuse controls)
+
+```env
+RATE_LIMIT_ENABLED=1
+RATE_LIMIT_WINDOW_SECONDS=60
+RATE_LIMIT_MAX_PUBLIC=120
+RATE_LIMIT_MAX_TRUSTED=1200
+```
+
+Emergency switch (blocks public internet, still allows localhost/Tailscale):
+```env
+MAINTENANCE_MODE=1
+```
 
 ---
 
 **Note:** If you want to run the API with production features (e.g., hot reload, multiple workers), you can use `uvicorn`:
 ```bash
 pip install uvicorn
-uvicorn api_server:app --reload --port 9001
+uvicorn api_server:app --reload --port 8000
+```
+
+---
+
+## Real TLS + HTTPS enforcement (recommended)
+
+Run FastAPI on loopback and terminate TLS in a local reverse proxy (Caddy or Nginx).
+The API enforces HTTPS by default for non-trusted networks (`REQUIRE_HTTPS=1`).
+
+High-level setup:
+1. Point `api.yourdomain.com` to your home IP (Dynamic DNS if needed).
+2. Forward ports `80`/`443` to the machine running the reverse proxy.
+3. Configure the proxy to forward to `http://127.0.0.1:9001` and set `X-Forwarded-Proto: https`.
+
+See `Caddyfile.example` for a minimal Caddy config.
+
+If you run behind a reverse proxy, ensure the API only trusts `X-Forwarded-For` from that proxy:
+```env
+TRUSTED_PROXY_CIDRS=127.0.0.1/32,::1/128
 ```
 
 ---

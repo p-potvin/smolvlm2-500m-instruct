@@ -1,0 +1,29 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../app/generated-prisma-client"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Workflow {
+  id       String  @id @db.VarChar(64)
+  name     String  @db.VarChar(255)
+  category String? @db.VarChar(255)
+  steps    Json?   @db.JsonB
+  pinned   Boolean @default(false)
+  favorite Boolean @default(false)
+
+  @@map("workflows")
+}
+
+model AiModel {
+  id           Int    @id @default(autoincrement())
+  friendlyName String @map("friendly_name") @db.VarChar(255)
+  modelName    String @map("model_name") @db.VarChar(255)
+  path         String @db.VarChar(1024)
+  type         String @db.VarChar(255)
+
+  @@map("ai_models")
+}
