@@ -83,6 +83,7 @@ MAINTENANCE_MODE = os.environ.get("MAINTENANCE_MODE", "0") == "1"
 
 GATEWAY_REQUIRED_PUBLIC = os.environ.get("GATEWAY_REQUIRED_PUBLIC", "1") == "1"
 GATEWAY_SHARED_SECRET = os.environ.get("GATEWAY_SHARED_SECRET", "")
+GATEWAY_HEADER_NAME = os.environ.get("GATEWAY_HEADER_NAME", "x-vw-gateway-secret").lower()
 
 
 # --- Logging Setup ---
@@ -162,6 +163,14 @@ def _origin_allowed(origin: str) -> bool:
     if origin in _cors_allow_origins:
         return True
     return False
+
+def _gateway_secret_valid(request: Request) -> bool:
+    if not GATEWAY_SHARED_SECRET:
+        return False
+    provided = request.headers.get(GATEWAY_HEADER_NAME, "")
+    if not provided:
+        return False
+    return secrets.compare_digest(provided, GATEWAY_SHARED_SECRET)
 
 def _hash_api_key(raw_key: str) -> str:
     if not raw_key:
@@ -254,15 +263,12 @@ async def gate_requests(request: Request, call_next):
         if GATEWAY_REQUIRED_PUBLIC:
             if not GATEWAY_SHARED_SECRET:
                 raise HTTPException(status_code=500, detail="Gateway secret is not configured")
-            provided = request.headers.get("x-vw-gateway-secret", "")
-            if not secrets.compare_digest(provided, GATEWAY_SHARED_SECRET):
+            if not _gateway_secret_valid(request):
                 raise HTTPException(status_code=403, detail="Forbidden source")
-
-        if origin:
-            if not _origin_allowed(origin):
-                raise HTTPException(status_code=403, detail="Forbidden origin")
         else:
-            raise HTTPException(status_code=403, detail="Forbidden source")
+            # No gateway required: fall back to browser origin allowlist.
+            if not origin or not _origin_allowed(origin):
+                raise HTTPException(status_code=403, detail="Forbidden source")
 
     if RATE_LIMIT_ENABLED:
         now = time.time()
@@ -629,9 +635,9 @@ async def login(payload: LoginRequest, request: Request):
 
     client_ip = _get_client_ip(request)
     if not _is_trusted_client_ip(client_ip):
-        # Public internet is browser-origin gated by middleware; this is a last defense-in-depth check.
-        origin = request.headers.get("origin", "")
-        if not origin or not _origin_allowed(origin):
+        if GATEWAY_REQUIRED_PUBLIC and not _gateway_secret_valid(request):
+            raise HTTPException(status_code=403, detail="Forbidden source")
+        if (not GATEWAY_REQUIRED_PUBLIC) and (not _origin_allowed(request.headers.get("origin", ""))):
             raise HTTPException(status_code=403, detail="Forbidden source")
 
     user = await UserAccount.get_or_none(username=payload.username)

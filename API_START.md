@@ -68,6 +68,10 @@ GATEWAY_SHARED_SECRET=change-me-long-random
 ```
 
 Your gateway must send `X-VW-Gateway-Secret: <secret>` when proxying to the API.
+If you want a different header name:
+```env
+GATEWAY_HEADER_NAME=x-vw-gateway-secret
+```
 
 Tailscale networks (defaults to `100.64.0.0/10` and `fd7a:115c:a1e0::/48`):
 ```env
@@ -114,7 +118,7 @@ See `Caddyfile.example` for a minimal Caddy config.
 
 If you run behind a reverse proxy, ensure the API only trusts `X-Forwarded-For` from that proxy:
 ```env
-TRUSTED_PROXY_CIDRS=127.0.0.1/32,::1/128
+TRUSTED_PROXY_CIDRS=10.0.0.50/32,127.0.0.1/32,::1/128
 ```
 
 ---
