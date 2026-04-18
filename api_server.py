@@ -177,7 +177,14 @@ def _hash_api_key(raw_key: str) -> str:
         return ""
     if not API_KEY_PEPPER:
         raise HTTPException(status_code=500, detail="API key pepper is not configured")
-    return hashlib.sha256((API_KEY_PEPPER + raw_key).encode("utf-8")).hexdigest()
+    return pwd_context.hash(API_KEY_PEPPER + raw_key)
+
+def _verify_api_key(raw_key: str, hashed_key: str) -> bool:
+    if not raw_key or not hashed_key:
+        return False
+    if not API_KEY_PEPPER:
+        raise HTTPException(status_code=500, detail="API key pepper is not configured")
+    return pwd_context.verify(API_KEY_PEPPER + raw_key, hashed_key)
 
 def _create_access_token(user_id: int, username: str, is_admin: bool) -> str:
     if not JWT_SECRET:
@@ -236,11 +243,16 @@ async def require_auth(
 
     api_key = request.headers.get("x-api-key", "")
     if api_key and is_trusted_ip:
-        key_hash = _hash_api_key(api_key)
-        key_row = await ApiKey.get_or_none(key_hash=key_hash)
-        if not key_row or key_row.is_revoked:
+        active_keys = await ApiKey.filter(is_revoked=False)
+        valid_key_row = None
+        for key_row in active_keys:
+            if _verify_api_key(api_key, key_row.key_hash):
+                valid_key_row = key_row
+                break
+
+        if not valid_key_row:
             raise HTTPException(status_code=401, detail="Invalid API key")
-        return {"kind": "api_key", "api_key": key_row}
+        return {"kind": "api_key", "key": valid_key_row}
 
     raise HTTPException(status_code=401, detail="Missing credentials")
 
