@@ -196,7 +196,25 @@ def _create_access_token(user_id: int, username: str, is_admin: bool) -> str:
     }
     return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
 
-async def _get_user_from_token(token: str) -> UserAccount:
+def _get_localized_unauthorized_msg(request: Request) -> str:
+    accept_language = request.headers.get("accept-language", "")
+    if not accept_language:
+        return "Unauthorized"
+
+    # Parse the Accept-Language header
+    languages = [lang.split(';')[0].strip().lower() for lang in accept_language.split(',')]
+
+    for lang in languages:
+        if lang.startswith("fr"):
+            return "Non autorisé"
+        elif lang.startswith("es"):
+            return "No autorizado"
+
+    return "Unauthorized"
+
+async def _get_user_from_token(token: str, request: Request) -> UserAccount:
+    detail_msg = _get_localized_unauthorized_msg(request)
+
     if not JWT_SECRET:
         raise HTTPException(status_code=500, detail="JWT secret is not configured")
     try:
@@ -208,15 +226,15 @@ async def _get_user_from_token(token: str) -> UserAccount:
             issuer=JWT_ISSUER,
         )
     except JWTError:
-        raise HTTPException(status_code=401, detail="Invalid token")
+        raise HTTPException(status_code=403, detail=detail_msg)
 
     user_id = payload.get("uid")
     if not isinstance(user_id, int):
-        raise HTTPException(status_code=401, detail="Invalid token")
+        raise HTTPException(status_code=403, detail=detail_msg)
 
     user = await UserAccount.get_or_none(id=user_id)
     if not user or user.is_disabled:
-        raise HTTPException(status_code=401, detail="Account disabled")
+        raise HTTPException(status_code=403, detail=detail_msg)
     return user
 
 async def require_auth(
@@ -231,7 +249,7 @@ async def require_auth(
 
     token = credentials.credentials if credentials else None
     if token:
-        user = await _get_user_from_token(token)
+        user = await _get_user_from_token(token, request)
         return {"kind": "user", "user": user}
 
     api_key = request.headers.get("x-api-key", "")
@@ -239,15 +257,24 @@ async def require_auth(
         key_hash = _hash_api_key(api_key)
         key_row = await ApiKey.get_or_none(key_hash=key_hash)
         if not key_row or key_row.is_revoked:
-            raise HTTPException(status_code=401, detail="Invalid API key")
+            detail_msg = _get_localized_unauthorized_msg(request)
+            raise HTTPException(status_code=403, detail=detail_msg)
         return {"kind": "api_key", "api_key": key_row}
 
-    raise HTTPException(status_code=401, detail="Missing credentials")
+    detail_msg = _get_localized_unauthorized_msg(request)
+    raise HTTPException(status_code=403, detail=detail_msg)
 
 _rate_state = defaultdict(lambda: deque())
+RATE_LIMIT_MAX_STATE_SIZE = 10000
 
 @app.middleware("http")
 async def gate_requests(request: Request, call_next):
+    if len(_rate_state) > RATE_LIMIT_MAX_STATE_SIZE:
+        # Prevent clearing the whole dictionary to avoid rate limit bypass
+        # Remove oldest element
+        oldest_key = next(iter(_rate_state))
+        _rate_state.pop(oldest_key, None)
+
     client_ip = _get_client_ip(request) or ""
     is_trusted_ip = _is_trusted_client_ip(client_ip)
 
