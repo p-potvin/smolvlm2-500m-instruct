@@ -14,6 +14,7 @@ import time
 from collections import defaultdict, deque
 import ipaddress
 import secrets
+import string
 
 import asyncio
 from dotenv import load_dotenv
@@ -243,15 +244,28 @@ async def require_auth(
 
     api_key = request.headers.get("x-api-key", "")
     if api_key and is_trusted_ip:
-        active_keys = await ApiKey.filter(is_revoked=False)
+        parts = api_key.split("_", 2)
         valid_key_row = None
-        for key_row in active_keys:
-            if _verify_api_key(api_key, key_row.key_hash):
-                valid_key_row = key_row
-                break
+
+        if len(parts) == 3 and parts[0] == "vwk":
+            try:
+                key_id = int(parts[1])
+                key_row = await ApiKey.get_or_none(id=key_id, is_revoked=False)
+                if key_row and _verify_api_key(api_key, key_row.key_hash):
+                    valid_key_row = key_row
+            except ValueError:
+                pass
+        else:
+            # Fallback for legacy keys (O(N) loop) to maintain backwards compatibility
+            active_keys = await ApiKey.filter(is_revoked=False)
+            for key_row in active_keys:
+                if _verify_api_key(api_key, key_row.key_hash):
+                    valid_key_row = key_row
+                    break
 
         if not valid_key_row:
             raise HTTPException(status_code=401, detail="Invalid API key")
+
         return {"kind": "api_key", "key": valid_key_row}
 
     raise HTTPException(status_code=401, detail="Missing credentials")
@@ -295,7 +309,18 @@ async def gate_requests(request: Request, call_next):
             raise HTTPException(status_code=429, detail="Rate limit exceeded")
         bucket.append(now)
 
-    return await call_next(request)
+    correlation_id = "c" + "".join(secrets.choice(string.ascii_lowercase + string.digits) for _ in range(6))
+    request.state.correlation_id = correlation_id
+
+    response = await call_next(request)
+
+    response.headers["Content-Security-Policy"] = "default-src 'self'"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["X-Correlation-Id"] = correlation_id
+
+    return response
 
 # --- Models ---
 class Workflow(BaseModel):
@@ -682,9 +707,19 @@ async def create_api_key(request: Request, payload: ApiKeyCreateRequest, princip
     if not _is_trusted_client_ip(client_ip):
         raise HTTPException(status_code=403, detail="Trusted network required")
 
-    raw_key = "vwk_" + secrets.token_urlsafe(32)
+    # Create the API key record first to get the auto-incremented ID
+    # Use a temporary placeholder hash, since the unique constraint requires it
+    temp_hash = "tmp_" + secrets.token_urlsafe(16)
+    obj = await ApiKey.create(name=payload.name, key_hash=temp_hash, scopes=payload.scopes or [])
+
+    # Generate the actual raw key with the ID embedded
+    raw_key = f"vwk_{obj.id}_{secrets.token_urlsafe(32)}"
     key_hash = _hash_api_key(raw_key)
-    await ApiKey.create(name=payload.name, key_hash=key_hash, scopes=payload.scopes or [])
+
+    # Update the record with the real hash
+    obj.key_hash = key_hash
+    await obj.save()
+
     return ApiKeyCreateResponse(api_key=raw_key, name=payload.name)
 
 @app.get("/workflows", response_model=List[Workflow])
