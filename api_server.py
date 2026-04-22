@@ -271,11 +271,20 @@ async def require_auth(
     raise HTTPException(status_code=401, detail="Missing credentials")
 
 _rate_state = defaultdict(lambda: deque())
+RATE_STATE_MAX_KEYS = 10000
 
 @app.middleware("http")
 async def gate_requests(request: Request, call_next):
     client_ip = _get_client_ip(request) or ""
     is_trusted_ip = _is_trusted_client_ip(client_ip)
+
+    if RATE_LIMIT_ENABLED and len(_rate_state) > RATE_STATE_MAX_KEYS:
+        now = time.time()
+        stale_keys = [k for k, v in _rate_state.items() if not v or (now - v[-1]) > RATE_LIMIT_WINDOW_SECONDS]
+        for k in stale_keys:
+            del _rate_state[k]
+        if len(_rate_state) > RATE_STATE_MAX_KEYS:
+            _rate_state.clear()
 
     if MAINTENANCE_MODE and not is_trusted_ip:
         raise HTTPException(status_code=503, detail="Temporarily unavailable")
