@@ -14,6 +14,7 @@ import time
 from collections import defaultdict, deque
 import ipaddress
 import secrets
+import string
 
 import asyncio
 from dotenv import load_dotenv
@@ -151,9 +152,10 @@ def _get_client_ip(request: Request) -> Optional[str]:
     xff = request.headers.get("x-forwarded-for", "")
     if not xff:
         return peer_ip
-    # Use first hop (original client)
-    first = xff.split(",")[0].strip()
-    return first or peer_ip
+    # Use the rightmost IP, which is the one appended by our trusted proxy.
+    # Using the leftmost IP allows an attacker to spoof their IP by sending a fake X-Forwarded-For header.
+    last = xff.split(",")[-1].strip()
+    return last or peer_ip
 
 def _origin_allowed(origin: str) -> bool:
     if not origin:
@@ -177,7 +179,14 @@ def _hash_api_key(raw_key: str) -> str:
         return ""
     if not API_KEY_PEPPER:
         raise HTTPException(status_code=500, detail="API key pepper is not configured")
-    return hashlib.sha256((API_KEY_PEPPER + raw_key).encode("utf-8")).hexdigest()
+    return pwd_context.hash(API_KEY_PEPPER + raw_key)
+
+def _verify_api_key(raw_key: str, hashed_key: str) -> bool:
+    if not raw_key or not hashed_key:
+        return False
+    if not API_KEY_PEPPER:
+        raise HTTPException(status_code=500, detail="API key pepper is not configured")
+    return pwd_context.verify(API_KEY_PEPPER + raw_key, hashed_key)
 
 def _create_access_token(user_id: int, username: str, is_admin: bool) -> str:
     if not JWT_SECRET:
@@ -278,6 +287,14 @@ async def gate_requests(request: Request, call_next):
     client_ip = _get_client_ip(request) or ""
     is_trusted_ip = _is_trusted_client_ip(client_ip)
 
+    if RATE_LIMIT_ENABLED and len(_rate_state) > RATE_STATE_MAX_KEYS:
+        now = time.time()
+        stale_keys = [k for k, v in _rate_state.items() if not v or (now - v[-1]) > RATE_LIMIT_WINDOW_SECONDS]
+        for k in stale_keys:
+            del _rate_state[k]
+        if len(_rate_state) > RATE_STATE_MAX_KEYS:
+            _rate_state.clear()
+
     if MAINTENANCE_MODE and not is_trusted_ip:
         raise HTTPException(status_code=503, detail="Temporarily unavailable")
 
@@ -310,7 +327,18 @@ async def gate_requests(request: Request, call_next):
             raise HTTPException(status_code=429, detail="Rate limit exceeded")
         bucket.append(now)
 
-    return await call_next(request)
+    correlation_id = "c" + "".join(secrets.choice(string.ascii_lowercase + string.digits) for _ in range(6))
+    request.state.correlation_id = correlation_id
+
+    response = await call_next(request)
+
+    response.headers["Content-Security-Policy"] = "default-src 'self'"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["X-Correlation-Id"] = correlation_id
+
+    return response
 
 # --- Models ---
 class Workflow(BaseModel):
@@ -697,9 +725,19 @@ async def create_api_key(request: Request, payload: ApiKeyCreateRequest, princip
     if not _is_trusted_client_ip(client_ip):
         raise HTTPException(status_code=403, detail="Trusted network required")
 
-    raw_key = "vwk_" + secrets.token_urlsafe(32)
+    # Create the API key record first to get the auto-incremented ID
+    # Use a temporary placeholder hash, since the unique constraint requires it
+    temp_hash = "tmp_" + secrets.token_urlsafe(16)
+    obj = await ApiKey.create(name=payload.name, key_hash=temp_hash, scopes=payload.scopes or [])
+
+    # Generate the actual raw key with the ID embedded
+    raw_key = f"vwk_{obj.id}_{secrets.token_urlsafe(32)}"
     key_hash = _hash_api_key(raw_key)
-    await ApiKey.create(name=payload.name, key_hash=key_hash, scopes=payload.scopes or [])
+
+    # Update the record with the real hash
+    obj.key_hash = key_hash
+    await obj.save()
+
     return ApiKeyCreateResponse(api_key=raw_key, name=payload.name)
 
 @app.get("/workflows", response_model=List[Workflow])
