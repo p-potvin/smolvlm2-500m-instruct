@@ -1,5 +1,5 @@
 # ============================================================
-# vault-server – core runtime dependencies
+# vaultwares-pipelines – core runtime dependencies
 # ============================================================
 
 # ---- multi-modal model (SmolVLM2) ----

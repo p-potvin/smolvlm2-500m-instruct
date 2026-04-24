@@ -1,4 +1,4 @@
-# vault-server: Multi-Agent Workflow Platform
+# vaultwares-pipelines: Multi-Agent Workflow Platform
 
 
 ## Overview
@@ -274,8 +274,8 @@ print(result)
 
 ```bash
 # 1. clone
-git clone https://github.com/p-potvin/vault-server
-cd vault-server
+git clone https://github.com/p-potvin/vaultwares-pipelines
+cd vaultwares-pipelines
 
 # 2. install (editable)
 pip install -e ".[dev]"
