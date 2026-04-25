@@ -154,9 +154,20 @@ def _get_client_ip(request: Request) -> Optional[str]:
     xff = request.headers.get("x-forwarded-for", "")
     if not xff:
         return peer_ip
-    # Use last hop (actual client as appended by trusted proxies)
-    last = xff.split(",")[-1].strip()
-    return last or peer_ip
+
+    # Iterate right-to-left to find the first untrusted IP
+    ips = [ip.strip() for ip in xff.split(",") if ip.strip()]
+    for ip_str in reversed(ips):
+        try:
+            ip_obj = ipaddress.ip_address(ip_str)
+            if not any(ip_obj in net for net in _trusted_proxy_networks):
+                return ip_str
+        except ValueError:
+            # If it's an invalid IP format, treat it as the untrusted client
+            return ip_str
+
+    # Fallback to leftmost if all are trusted
+    return ips[0] if ips else peer_ip
 
 def _origin_allowed(origin: str) -> bool:
     if not origin:
