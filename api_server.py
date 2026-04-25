@@ -154,9 +154,9 @@ def _get_client_ip(request: Request) -> Optional[str]:
     xff = request.headers.get("x-forwarded-for", "")
     if not xff:
         return peer_ip
-    # Use first hop (original client)
-    first = xff.split(",")[0].strip()
-    return first or peer_ip
+    # Use last hop (actual client as appended by trusted proxies)
+    last = xff.split(",")[-1].strip()
+    return last or peer_ip
 
 def _origin_allowed(origin: str) -> bool:
     if not origin:
