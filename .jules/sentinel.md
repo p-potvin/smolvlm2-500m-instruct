@@ -18,3 +18,13 @@
 **Vulnerability:** The `_get_client_ip` function parsed the leftmost IP from the `X-Forwarded-For` header. Because clients can easily spoof this header, an attacker could set it to a trusted internal IP (like `127.0.0.1`), effectively bypassing `_is_trusted_client_ip` authorization checks intended only for internal services.
 **Learning:** In scenarios behind trusted reverse proxies (like Nginx), the proxy *appends* the actual client IP to the `X-Forwarded-For` chain. The leftmost IP is always untrusted user input and can be anything.
 **Prevention:** Always extract the rightmost IP address from the `X-Forwarded-For` header (or iterate right-to-left stopping at the first untrusted proxy) to ensure you are validating the true connection IP, preventing IP spoofing vulnerabilities.
+
+## 2026-05-01 - API Key Bcrypt DoS & Missing O(1) Lookup
+**Vulnerability:** API keys were hashed using bcrypt before DB lookup, causing 100% DB misses due to random salt, breaking authentication. Furthermore, doing bcrypt on every request allows an unauthenticated attacker to cause a CPU exhaustion DoS.
+**Learning:** When verifying passwords or API keys, never hash the incoming key with bcrypt and query the database for a match. You must look up the record first (e.g. by ID) and verify the password against the retrieved hash using the context manager.
+**Prevention:** Switch to a deterministic hash (like SHA-256 with a pepper) for O(1) database lookups. Provide an O(1) ID lookup route first (e.g. embedding the ID in the token string itself ) and fall back to the deterministic hash if the ID lookup fails.
+
+## 2026-05-01 - API Key Bcrypt DoS & Missing O(1) Lookup
+**Vulnerability:** API keys were hashed using bcrypt before DB lookup, causing 100% DB misses due to random salt, breaking authentication. Furthermore, doing bcrypt on every request allows an unauthenticated attacker to cause a CPU exhaustion DoS.
+**Learning:** When verifying passwords or API keys, never hash the incoming key with bcrypt and query the database for a match. You must look up the record first (e.g. by ID) and verify the password against the retrieved hash using the context manager.
+**Prevention:** Switch to a deterministic hash (like SHA-256 with a pepper) for O(1) database lookups. Provide an O(1) ID lookup route first (e.g. embedding the ID in the token string itself) and fall back to the deterministic hash if the ID lookup fails.
