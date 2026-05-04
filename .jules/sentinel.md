@@ -28,3 +28,8 @@
 **Vulnerability:** API keys were hashed using bcrypt before DB lookup, causing 100% DB misses due to random salt, breaking authentication. Furthermore, doing bcrypt on every request allows an unauthenticated attacker to cause a CPU exhaustion DoS.
 **Learning:** When verifying passwords or API keys, never hash the incoming key with bcrypt and query the database for a match. You must look up the record first (e.g. by ID) and verify the password against the retrieved hash using the context manager.
 **Prevention:** Switch to a deterministic hash (like SHA-256 with a pepper) for O(1) database lookups. Provide an O(1) ID lookup route first (e.g. embedding the ID in the token string itself) and fall back to the deterministic hash if the ID lookup fails.
+## $(date +%Y-%m-%d) - Subprocess Command Injection Prevention
+
+**Vulnerability:** Subprocesses generating Git commits used string formatting to construct commit messages and passed them to `git commit -m`.
+**Learning:** While `shell=False` protects against basic command injection (e.g. `&& rm -rf /`), parameter injection or argument confusion is still possible if untrusted input slips in.
+**Prevention:** Use standard input streams for passing untrusted strings as data rather than command arguments. In the context of `git commit`, this means using `-F -` and passing the message via `subprocess.run(..., input=message_string)`.
