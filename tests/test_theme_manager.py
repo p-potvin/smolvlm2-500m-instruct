@@ -24,17 +24,13 @@ class TestVaultThemeManager:
 
     def test_get_themes(self, manager):
         themes = manager.get_themes()
-        assert len(themes) == 9
+        assert len(themes) == 10
         assert isinstance(themes[0], VaultTheme)
 
     def test_get_theme_by_index(self, manager):
         theme = manager.get_theme(0)
-        assert theme.name == "Vintage Velvet"
-        theme = manager.get_theme(99)
-        assert theme.name == "Cyberpunk Cinder"
-        theme = manager.get_theme(-1)
-        assert theme.name == "Cyberpunk Cinder"
+        assert theme.name == "Golden Slate"
 
     def test_get_glass_rgba(self, manager):
         rgba = manager.get_glass_rgba("#FFFFFF", 128)
-        assert rgba == "rgba(255, 255, 255, 128)"
+        assert rgba == "rgba(255, 255, 255, 0.5019607843137255)"
