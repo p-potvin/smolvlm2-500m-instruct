@@ -1,12 +1,17 @@
 import pytest
 import os
+import sys
 import importlib.util
+
+# Ensure the parent directory is in sys.path so the module can resolve properly
+sys.path.insert(0, os.path.join(os.getcwd(), "vault-themes"))
 
 # Robustly load the module from the hyphenated directory
 module_name = "theme_manager"
 file_path = os.path.join(os.getcwd(), "vault-themes", "theme_manager.py")
 spec = importlib.util.spec_from_file_location(module_name, file_path)
 theme_manager_mod = importlib.util.module_from_spec(spec)
+sys.modules[module_name] = theme_manager_mod
 spec.loader.exec_module(theme_manager_mod)
 
 VaultThemeManager = theme_manager_mod.VaultThemeManager
