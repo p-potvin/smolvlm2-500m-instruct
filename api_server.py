@@ -744,6 +744,8 @@ async def login(payload: LoginRequest, request: Request):
 
     user = await UserAccount.get_or_none(username=payload.username)
     if not user or user.is_disabled:
+        # Prevent timing-based username enumeration
+        pwd_context.dummy_verify()
         raise HTTPException(status_code=401, detail="Invalid credentials")
     if not pwd_context.verify(payload.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -1021,7 +1023,9 @@ def get_config(_principal=Depends(require_auth)):
     return APP_CONFIG
 
 @app.post("/config")
-def update_config(req: ConfigUpdateRequest, _principal=Depends(require_auth)):
+def update_config(req: ConfigUpdateRequest, principal=Depends(require_auth)):
+    if principal.get("kind") == "user" and not principal["user"].is_admin:
+        raise HTTPException(status_code=403, detail="Admin required")
     payload = req.model_dump(exclude_none=True)
     APP_CONFIG.update(payload)
     if "modelsDir" in payload:
@@ -1036,7 +1040,9 @@ def get_models_dir(_principal=Depends(require_auth)):
     return {"models_dir": value, "dir_path": value, "modelsDir": value}
 
 @app.post("/config/models-dir")
-def set_models_dir(req: ModelsDirRequest, _principal=Depends(require_auth)):
+def set_models_dir(req: ModelsDirRequest, principal=Depends(require_auth)):
+    if principal.get("kind") == "user" and not principal["user"].is_admin:
+        raise HTTPException(status_code=403, detail="Admin required")
     global DEFAULT_MODELS_DIR
     resolved = req.dir_path or req.models_dir or req.modelsDir
     if resolved is None:

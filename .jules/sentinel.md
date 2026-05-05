@@ -33,3 +33,13 @@
 **Vulnerability:** Subprocesses generating Git commits used string formatting to construct commit messages and passed them to `git commit -m`.
 **Learning:** While `shell=False` protects against basic command injection (e.g. `&& rm -rf /`), parameter injection or argument confusion is still possible if untrusted input slips in.
 **Prevention:** Use standard input streams for passing untrusted strings as data rather than command arguments. In the context of `git commit`, this means using `-F -` and passing the message via `subprocess.run(..., input=message_string)`.
+
+## 2026-05-05 - Admin Authorization Bypass in Global Config Endpoints
+**Vulnerability:** The `/config` and `/config/models-dir` POST endpoints allowed any authenticated user to change global system configurations, including `modelsDir` and `localBridgeUrl`, potentially leading to Path Traversal or Server-Side Request Forgery (SSRF).
+**Learning:** Endpoints that modify global or system-level state must enforce authorization checks (e.g., verifying `user.is_admin`) in addition to general authentication checks, to prevent privilege escalation.
+**Prevention:** Always verify that the authenticated principal has the appropriate role (`is_admin`) before allowing them to mutate global state or sensitive system settings.
+
+## 2026-05-05 - Timing Attack in Login Endpoint
+**Vulnerability:** The `/auth/login` endpoint returned immediately with a 401 error if a username was not found in the database, allowing an attacker to determine if a user exists based on the response time (timing attack).
+**Learning:** During authentication flows, cryptographic operations (like password hashing) take a significant and measurable amount of time. If these are skipped when a user doesn't exist, the discrepancy leaks information about valid usernames.
+**Prevention:** Always use a dummy verification method (e.g., `pwd_context.dummy_verify()`) when a user is not found to simulate the time taken by a real password verification, ensuring consistent response times regardless of whether the user exists or not.
