@@ -14,6 +14,7 @@ import time
 from collections import defaultdict, deque
 import ipaddress
 import secrets
+import string
 
 import asyncio
 from dotenv import load_dotenv
@@ -26,12 +27,14 @@ from passlib.context import CryptContext
 # Load .env before reading environment-backed settings.
 load_dotenv()
 
+from app.security.ml_kem import VaultMLKEM
+
 # --- Configurable Settings ---
 AUTH_ENABLED = os.environ.get("AUTH_ENABLED", "1") == "1"
 DEFAULT_MODELS_DIR = os.environ.get("DEFAULT_MODELS_DIR") or os.environ.get("MODELS_DIR")
 
 JWT_SECRET = os.environ.get("JWT_SECRET", "")
-JWT_ISSUER = os.environ.get("JWT_ISSUER", "vaultwares-pipelines")
+JWT_ISSUER = os.environ.get("JWT_ISSUER", "vault-server")
 JWT_AUDIENCE = os.environ.get("JWT_AUDIENCE", "vaultwares")
 JWT_TTL_SECONDS = int(os.environ.get("JWT_TTL_SECONDS", "900"))
 API_KEY_PEPPER = os.environ.get("API_KEY_PEPPER") or JWT_SECRET
@@ -83,6 +86,7 @@ MAINTENANCE_MODE = os.environ.get("MAINTENANCE_MODE", "0") == "1"
 
 GATEWAY_REQUIRED_PUBLIC = os.environ.get("GATEWAY_REQUIRED_PUBLIC", "1") == "1"
 GATEWAY_SHARED_SECRET = os.environ.get("GATEWAY_SHARED_SECRET", "")
+GATEWAY_HEADER_NAME = os.environ.get("GATEWAY_HEADER_NAME", "x-vw-gateway-secret").lower()
 
 
 # --- Logging Setup ---
@@ -145,14 +149,26 @@ def _get_client_ip(request: Request) -> Optional[str]:
 
     is_trusted_proxy = any(peer_obj in net for net in _trusted_proxy_networks)
     if not is_trusted_proxy:
+        # Client connected directly to server; ignore X-Forwarded-For completely
         return peer_ip
 
     xff = request.headers.get("x-forwarded-for", "")
     if not xff:
         return peer_ip
-    # Use first hop (original client)
-    first = xff.split(",")[0].strip()
-    return first or peer_ip
+
+    # Iterate right-to-left to find the first untrusted IP
+    ips = [ip.strip() for ip in xff.split(",") if ip.strip()]
+    for ip_str in reversed(ips):
+        try:
+            ip_obj = ipaddress.ip_address(ip_str)
+            if not any(ip_obj in net for net in _trusted_proxy_networks):
+                return ip_str
+        except ValueError:
+            # If it's an invalid IP format, treat it as the untrusted client
+            return ip_str
+
+    # Fallback to leftmost if all are trusted
+    return ips[0] if ips else peer_ip
 
 def _origin_allowed(origin: str) -> bool:
     if not origin:
@@ -163,12 +179,30 @@ def _origin_allowed(origin: str) -> bool:
         return True
     return False
 
+def _gateway_secret_valid(request: Request) -> bool:
+    if not GATEWAY_SHARED_SECRET:
+        return False
+    provided = request.headers.get(GATEWAY_HEADER_NAME, "")
+    if not provided:
+        return False
+    return secrets.compare_digest(provided, GATEWAY_SHARED_SECRET)
+
 def _hash_api_key(raw_key: str) -> str:
     if not raw_key:
         return ""
     if not API_KEY_PEPPER:
         raise HTTPException(status_code=500, detail="API key pepper is not configured")
     return hashlib.sha256((API_KEY_PEPPER + raw_key).encode("utf-8")).hexdigest()
+
+def _verify_api_key(raw_key: str, hashed_key: str) -> bool:
+    if not raw_key or not hashed_key:
+        return False
+    if not API_KEY_PEPPER:
+        raise HTTPException(status_code=500, detail="API key pepper is not configured")
+    if hashed_key.startswith("$2"):
+        # Legacy bcrypt support
+        return pwd_context.verify(API_KEY_PEPPER + raw_key, hashed_key)
+    return secrets.compare_digest(_hash_api_key(raw_key), hashed_key)
 
 def _create_access_token(user_id: int, username: str, is_admin: bool) -> str:
     if not JWT_SECRET:
@@ -187,7 +221,25 @@ def _create_access_token(user_id: int, username: str, is_admin: bool) -> str:
     }
     return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
 
-async def _get_user_from_token(token: str) -> UserAccount:
+def _get_localized_unauthorized_msg(request: Request) -> str:
+    accept_language = request.headers.get("accept-language", "")
+    if not accept_language:
+        return "Unauthorized"
+
+    # Parse the Accept-Language header
+    languages = [lang.split(';')[0].strip().lower() for lang in accept_language.split(',')]
+
+    for lang in languages:
+        if lang.startswith("fr"):
+            return "Non autorisé"
+        elif lang.startswith("es"):
+            return "No autorizado"
+
+    return "Unauthorized"
+
+async def _get_user_from_token(token: str, request: Request) -> UserAccount:
+    detail_msg = _get_localized_unauthorized_msg(request)
+
     if not JWT_SECRET:
         raise HTTPException(status_code=500, detail="JWT secret is not configured")
     try:
@@ -199,15 +251,15 @@ async def _get_user_from_token(token: str) -> UserAccount:
             issuer=JWT_ISSUER,
         )
     except JWTError:
-        raise HTTPException(status_code=401, detail="Invalid token")
+        raise HTTPException(status_code=403, detail=detail_msg)
 
     user_id = payload.get("uid")
     if not isinstance(user_id, int):
-        raise HTTPException(status_code=401, detail="Invalid token")
+        raise HTTPException(status_code=403, detail=detail_msg)
 
     user = await UserAccount.get_or_none(id=user_id)
     if not user or user.is_disabled:
-        raise HTTPException(status_code=401, detail="Account disabled")
+        raise HTTPException(status_code=403, detail=detail_msg)
     return user
 
 async def require_auth(
@@ -222,23 +274,49 @@ async def require_auth(
 
     token = credentials.credentials if credentials else None
     if token:
-        user = await _get_user_from_token(token)
+        user = await _get_user_from_token(token, request)
         return {"kind": "user", "user": user}
 
     api_key = request.headers.get("x-api-key", "")
     if api_key and is_trusted_ip:
-        key_hash = _hash_api_key(api_key)
-        key_row = await ApiKey.get_or_none(key_hash=key_hash)
-        if not key_row or key_row.is_revoked:
-            raise HTTPException(status_code=401, detail="Invalid API key")
-        return {"kind": "api_key", "api_key": key_row}
+        key_row = None
 
-    raise HTTPException(status_code=401, detail="Missing credentials")
+        # 1. Try O(1) lookup by ID for new keys (format: vwk_{id}_{secret})
+        parts = api_key.split('_')
+        if len(parts) >= 3 and parts[0] == "vwk":
+            try:
+                key_id = int(parts[1])
+                key_row = await ApiKey.get_or_none(id=key_id)
+            except ValueError:
+                pass
+
+        # 2. Try O(1) lookup by hash if ID lookup failed (e.g., legacy keys without the vwk_ prefix)
+        # Note: This will not find legacy bcrypt keys without an ID, but an O(N) loop is intentionally
+        # omitted to prevent CPU exhaustion DoS vulnerabilities.
+        if not key_row:
+            key_hash = _hash_api_key(api_key)
+            key_row = await ApiKey.get_or_none(key_hash=key_hash)
+
+        if key_row and not key_row.is_revoked and _verify_api_key(api_key, key_row.key_hash):
+            return {"kind": "api_key", "api_key": key_row}
+
+        detail_msg = _get_localized_unauthorized_msg(request)
+        raise HTTPException(status_code=403, detail=detail_msg)
+
+    detail_msg = _get_localized_unauthorized_msg(request)
+    raise HTTPException(status_code=403, detail=detail_msg)
 
 _rate_state = defaultdict(lambda: deque())
+RATE_LIMIT_MAX_STATE_SIZE = 10000
 
 @app.middleware("http")
 async def gate_requests(request: Request, call_next):
+    if len(_rate_state) > RATE_LIMIT_MAX_STATE_SIZE:
+        # Prevent clearing the whole dictionary to avoid rate limit bypass
+        # Remove oldest element
+        oldest_key = next(iter(_rate_state))
+        _rate_state.pop(oldest_key, None)
+
     client_ip = _get_client_ip(request) or ""
     is_trusted_ip = _is_trusted_client_ip(client_ip)
 
@@ -254,8 +332,7 @@ async def gate_requests(request: Request, call_next):
         if GATEWAY_REQUIRED_PUBLIC:
             if not GATEWAY_SHARED_SECRET:
                 raise HTTPException(status_code=500, detail="Gateway secret is not configured")
-            provided = request.headers.get("x-vw-gateway-secret", "")
-            if not secrets.compare_digest(provided, GATEWAY_SHARED_SECRET):
+            if not _gateway_secret_valid(request):
                 raise HTTPException(status_code=403, detail="Forbidden source")
 
         if origin:
@@ -275,7 +352,18 @@ async def gate_requests(request: Request, call_next):
             raise HTTPException(status_code=429, detail="Rate limit exceeded")
         bucket.append(now)
 
-    return await call_next(request)
+    correlation_id = "c" + "".join(secrets.choice(string.ascii_lowercase + string.digits) for _ in range(6))
+    request.state.correlation_id = correlation_id
+
+    response = await call_next(request)
+
+    response.headers["Content-Security-Policy"] = "default-src 'self'"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["X-Correlation-Id"] = correlation_id
+
+    return response
 
 # --- Models ---
 class Workflow(BaseModel):
@@ -360,6 +448,13 @@ class LoginResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     expires_in: int
+
+class PqcHandshakeRequest(BaseModel):
+    client_public_key: str
+
+class PqcHandshakeResponse(BaseModel):
+    server_cipher_text: str
+    algorithm: str = "ML-KEM-768"
 
 class MeResponse(BaseModel):
     username: str
@@ -620,6 +715,19 @@ async def shutdown_event():
 def db_available() -> bool:
     return bool(_tortoise_initialized and Tortoise._inited)
 
+@app.post("/security/pqc/handshake", response_model=PqcHandshakeResponse)
+async def pqc_handshake(payload: PqcHandshakeRequest):
+    """
+    Experimental PQC Handshake (ML-KEM).
+    """
+    try:
+        result = VaultMLKEM.encapsulate(payload.client_public_key)
+        return PqcHandshakeResponse(
+            server_cipher_text=result["cipher_text"]
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
 @app.post("/auth/login", response_model=LoginResponse)
 async def login(payload: LoginRequest, request: Request):
     if not AUTH_ENABLED:
@@ -636,6 +744,8 @@ async def login(payload: LoginRequest, request: Request):
 
     user = await UserAccount.get_or_none(username=payload.username)
     if not user or user.is_disabled:
+        # Prevent timing-based username enumeration
+        pwd_context.dummy_verify()
         raise HTTPException(status_code=401, detail="Invalid credentials")
     if not pwd_context.verify(payload.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -662,9 +772,19 @@ async def create_api_key(request: Request, payload: ApiKeyCreateRequest, princip
     if not _is_trusted_client_ip(client_ip):
         raise HTTPException(status_code=403, detail="Trusted network required")
 
-    raw_key = "vwk_" + secrets.token_urlsafe(32)
+    # Create the API key record first to get the auto-incremented ID
+    # Use a temporary placeholder hash, since the unique constraint requires it
+    temp_hash = "tmp_" + secrets.token_urlsafe(16)
+    obj = await ApiKey.create(name=payload.name, key_hash=temp_hash, scopes=payload.scopes or [])
+
+    # Generate the actual raw key with the ID embedded
+    raw_key = f"vwk_{obj.id}_{secrets.token_urlsafe(32)}"
     key_hash = _hash_api_key(raw_key)
-    await ApiKey.create(name=payload.name, key_hash=key_hash, scopes=payload.scopes or [])
+
+    # Update the record with the real hash
+    obj.key_hash = key_hash
+    await obj.save()
+
     return ApiKeyCreateResponse(api_key=raw_key, name=payload.name)
 
 @app.get("/workflows", response_model=List[Workflow])
@@ -903,7 +1023,9 @@ def get_config(_principal=Depends(require_auth)):
     return APP_CONFIG
 
 @app.post("/config")
-def update_config(req: ConfigUpdateRequest, _principal=Depends(require_auth)):
+def update_config(req: ConfigUpdateRequest, principal=Depends(require_auth)):
+    if principal.get("kind") == "user" and not principal["user"].is_admin:
+        raise HTTPException(status_code=403, detail="Admin required")
     payload = req.model_dump(exclude_none=True)
     APP_CONFIG.update(payload)
     if "modelsDir" in payload:
@@ -918,7 +1040,9 @@ def get_models_dir(_principal=Depends(require_auth)):
     return {"models_dir": value, "dir_path": value, "modelsDir": value}
 
 @app.post("/config/models-dir")
-def set_models_dir(req: ModelsDirRequest, _principal=Depends(require_auth)):
+def set_models_dir(req: ModelsDirRequest, principal=Depends(require_auth)):
+    if principal.get("kind") == "user" and not principal["user"].is_admin:
+        raise HTTPException(status_code=403, detail="Admin required")
     global DEFAULT_MODELS_DIR
     resolved = req.dir_path or req.models_dir or req.modelsDir
     if resolved is None:
@@ -933,4 +1057,7 @@ def set_models_dir(req: ModelsDirRequest, _principal=Depends(require_auth)):
 # --- Script Entrypoint ---
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("api_server:app", host="127.0.0.1", port=9001, reload=True)
+    host = os.environ.get("API_HOST", "127.0.0.1")
+    port = int(os.environ.get("API_PORT", "9001"))
+    reload = os.environ.get("UVICORN_RELOAD", "1") == "1"
+    uvicorn.run("api_server:app", host=host, port=port, reload=reload)

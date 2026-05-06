@@ -30,11 +30,13 @@ uvicorn[standard]
 psutil>=5.9.0          # memory_info() in DeviceManager
 tortoise-orm
 python-jose[cryptography]
+bcrypt==4.0.1
 passlib[bcrypt]
 
 ipython>=9.10.1
 redis>=7.0.0
-pyinstaller
+pyinstaller>=6.0.0
+
 pydantic
 # For persistent storage integrations (to be implemented):
 # google-api-python-client  # Google Drive
