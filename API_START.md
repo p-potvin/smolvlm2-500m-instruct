@@ -35,7 +35,7 @@ This API supports:
 Required env vars for JWT:
 ```env
 JWT_SECRET=change-me
-JWT_ISSUER=vaultwares-pipelines
+JWT_ISSUER=vault-server
 JWT_AUDIENCE=vaultwares
 JWT_TTL_SECONDS=900
 ```
@@ -73,9 +73,30 @@ If you want a different header name:
 GATEWAY_HEADER_NAME=x-vw-gateway-secret
 ```
 
+See `brume2_nginx.conf.example` for an OpenWrt-friendly Nginx starting point (adjust cert paths).
+
+### Brume 2 (OpenWrt) Nginx quick start
+
+1. Copy the example to your Brume (adjust as needed for your Nginx install):
+   - Common locations: `/etc/nginx/conf.d/vaultwares-api.conf` or `/etc/nginx/sites-enabled/vaultwares-api.conf`
+   - Ensure it’s included by your main `/etc/nginx/nginx.conf` (you can verify with `nginx -T`).
+2. Replace `<GATEWAY_SHARED_SECRET>` with the same value used on the API host.
+3. Set `ssl_certificate` / `ssl_certificate_key` to the files created by your ACME client.
+   - `luci-app-acme` / `acme.sh` commonly uses `/etc/acme/<domain>/...` (see comments in `brume2_nginx.conf.example`).
+4. Validate and reload:
+   - `nginx -t`
+   - `/etc/init.d/nginx reload` (or restart if reload isn’t supported)
+
 Tailscale networks (defaults to `100.64.0.0/10` and `fd7a:115c:a1e0::/48`):
 ```env
 TAILSCALE_CIDRS=100.64.0.0/10,fd7a:115c:a1e0::/48
+```
+
+When using the Brume gateway over LAN, run the API bound to LAN:
+```env
+API_HOST=0.0.0.0
+API_PORT=9001
+UVICORN_RELOAD=1
 ```
 
 ---
@@ -120,6 +141,39 @@ If you run behind a reverse proxy, ensure the API only trusts `X-Forwarded-For` 
 ```env
 TRUSTED_PROXY_CIDRS=10.0.0.50/32,127.0.0.1/32,::1/128
 ```
+
+---
+
+## Local TLS with mkcert (recommended for Windows development)
+
+Use mkcert to run the API locally over real HTTPS while keeping the certificates out of git.
+
+### Generate certificates
+
+```powershell
+.\generate_local_tls_certs.ps1
+```
+
+This creates:
+
+- `.certs/localhost+127.0.0.1.pem`
+- `.certs/localhost+127.0.0.1-key.pem`
+
+### Start the local HTTPS API
+
+```powershell
+.\start_https_dev.ps1
+```
+
+Recommended local frontend origin:
+
+- `https://localhost:5174`
+
+Recommended local API base:
+
+- `https://localhost:8000`
+
+If you need a different port, set `API_PORT` before running the script.
 
 ---
 
