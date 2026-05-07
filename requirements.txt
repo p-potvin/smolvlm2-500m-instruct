@@ -42,3 +42,5 @@ pydantic
 # google-api-python-client  # Google Drive
 # dropbox  # Dropbox
 # pyicloud  # iCloud
+
+rembg>=2.0.50
