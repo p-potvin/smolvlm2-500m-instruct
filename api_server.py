@@ -334,12 +334,10 @@ async def gate_requests(request: Request, call_next):
                 raise HTTPException(status_code=500, detail="Gateway secret is not configured")
             if not _gateway_secret_valid(request):
                 raise HTTPException(status_code=403, detail="Forbidden source")
-
-        if origin:
-            if not _origin_allowed(origin):
-                raise HTTPException(status_code=403, detail="Forbidden origin")
         else:
-            raise HTTPException(status_code=403, detail="Forbidden source")
+            # No gateway required: fall back to browser origin allowlist.
+            if not origin or not _origin_allowed(origin):
+                raise HTTPException(status_code=403, detail="Forbidden source")
 
     if RATE_LIMIT_ENABLED:
         now = time.time()
@@ -737,9 +735,9 @@ async def login(payload: LoginRequest, request: Request):
 
     client_ip = _get_client_ip(request)
     if not _is_trusted_client_ip(client_ip):
-        # Public internet is browser-origin gated by middleware; this is a last defense-in-depth check.
-        origin = request.headers.get("origin", "")
-        if not origin or not _origin_allowed(origin):
+        if GATEWAY_REQUIRED_PUBLIC and not _gateway_secret_valid(request):
+            raise HTTPException(status_code=403, detail="Forbidden source")
+        if (not GATEWAY_REQUIRED_PUBLIC) and (not _origin_allowed(request.headers.get("origin", ""))):
             raise HTTPException(status_code=403, detail="Forbidden source")
 
     user = await UserAccount.get_or_none(username=payload.username)

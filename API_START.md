@@ -139,7 +139,7 @@ See `Caddyfile.example` for a minimal Caddy config.
 
 If you run behind a reverse proxy, ensure the API only trusts `X-Forwarded-For` from that proxy:
 ```env
-TRUSTED_PROXY_CIDRS=127.0.0.1/32,::1/128
+TRUSTED_PROXY_CIDRS=10.0.0.50/32,127.0.0.1/32,::1/128
 ```
 
 ---
