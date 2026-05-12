@@ -6,6 +6,7 @@
 ## vault-themes Submodule
 
 Before UI, branding, or token work, read:
+
 - `vault-themes/AGENTS.md`
 - `vault-themes/CONTEXT.md`
 <!-- VAULT-THEMES-SUBMODULE:END -->

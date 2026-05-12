@@ -14,6 +14,7 @@ import time
 from collections import defaultdict, deque
 import ipaddress
 import secrets
+import socket
 import string
 
 import asyncio
@@ -52,6 +53,18 @@ ALLOWED_ORIGINS = set(
     for origin in os.environ.get("ALLOWED_ORIGINS", "").split(",")
     if origin.strip()
 )
+
+TRUSTED_CLIENT_IPS = [
+    ip.strip()
+    for ip in os.environ.get("TRUSTED_CLIENT_IPS", "").split(",")
+    if ip.strip()
+]
+_trusted_client_ips = []
+for _ip in TRUSTED_CLIENT_IPS:
+    try:
+        _trusted_client_ips.append(ipaddress.ip_address(_ip))
+    except ValueError:
+        pass
 
 TAILSCALE_CIDRS = [
     cidr.strip()
@@ -123,15 +136,30 @@ def _is_trusted_client_ip(ip: Optional[str]) -> bool:
         ip_obj = ipaddress.ip_address(ip)
     except ValueError:
         return False
+    if _trusted_client_ips:
+        return any(ip_obj == trusted_ip for trusted_ip in _trusted_client_ips)
     for net in _tailscale_networks:
         if ip_obj in net:
             return True
     return False
 
+def _is_trusted_proxy_peer(peer_ip: Optional[str]) -> bool:
+    if not peer_ip:
+        return False
+    try:
+        peer_obj = ipaddress.ip_address(peer_ip)
+    except ValueError:
+        return False
+    return any(peer_obj in net for net in _trusted_proxy_networks)
+
 def _effective_scheme(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-proto")
-    if forwarded:
-        return forwarded.split(",")[0].strip().lower()
+    # Only trust proxy-provided scheme headers when the immediate peer is a trusted proxy.
+    # Otherwise, a direct caller could spoof x-forwarded-proto to bypass HTTPS enforcement.
+    peer_ip = request.client.host if request.client else None
+    if _is_trusted_proxy_peer(peer_ip):
+        forwarded = request.headers.get("x-forwarded-proto")
+        if forwarded:
+            return forwarded.split(",")[0].strip().lower()
     return request.url.scheme.lower()
 
 def _get_client_ip(request: Request) -> Optional[str]:
@@ -147,7 +175,7 @@ def _get_client_ip(request: Request) -> Optional[str]:
     except ValueError:
         return peer_ip
 
-    is_trusted_proxy = any(peer_obj in net for net in _trusted_proxy_networks)
+    is_trusted_proxy = _is_trusted_proxy_peer(peer_ip)
     if not is_trusted_proxy:
         # Client connected directly to server; ignore X-Forwarded-For completely
         return peer_ip
@@ -466,6 +494,20 @@ class ApiKeyCreateResponse(BaseModel):
     api_key: str
     name: Optional[str] = None
 
+class NetworkDiagnosticsResponse(BaseModel):
+    served_by: str
+    peer_ip: str
+    client_ip: str
+    effective_scheme: str
+    via_trusted_proxy: bool
+    trusted_client_ip: bool
+    trusted_client_allowlist_active: bool
+    gateway_required_public: bool
+    gateway_header_present: bool
+    forwarded_for: Optional[str] = None
+    forwarded_proto: Optional[str] = None
+    correlation_id: Optional[str] = None
+
 # --- Persistent JSON Storage ---
 VAULTWARES_HOME_CSS = """
 body { background: #181c24; color: #f3f6fa; font-family: 'Segoe UI', Arial, sans-serif; text-align: center; margin: 0; padding: 0; }
@@ -735,9 +777,12 @@ async def login(payload: LoginRequest, request: Request):
 
     client_ip = _get_client_ip(request)
     if not _is_trusted_client_ip(client_ip):
+        # Login is expected to be initiated by your own frontends (browser requests).
+        # Even in gateway mode, require an allowlisted Origin to reduce drive-by abuse.
+        origin = request.headers.get("origin", "")
+        if not _origin_allowed(origin):
+            raise HTTPException(status_code=403, detail="Forbidden origin")
         if GATEWAY_REQUIRED_PUBLIC and not _gateway_secret_valid(request):
-            raise HTTPException(status_code=403, detail="Forbidden source")
-        if (not GATEWAY_REQUIRED_PUBLIC) and (not _origin_allowed(request.headers.get("origin", ""))):
             raise HTTPException(status_code=403, detail="Forbidden source")
 
     user = await UserAccount.get_or_none(username=payload.username)
@@ -784,6 +829,28 @@ async def create_api_key(request: Request, payload: ApiKeyCreateRequest, princip
     await obj.save()
 
     return ApiKeyCreateResponse(api_key=raw_key, name=payload.name)
+
+@app.get("/diagnostics/network", response_model=NetworkDiagnosticsResponse)
+async def network_diagnostics(request: Request, principal=Depends(require_auth)):
+    if principal.get("kind") == "user" and not principal["user"].is_admin:
+        raise HTTPException(status_code=403, detail="Admin required")
+
+    peer_ip = request.client.host if request.client else ""
+    client_ip = _get_client_ip(request) or ""
+    return NetworkDiagnosticsResponse(
+        served_by=socket.gethostname(),
+        peer_ip=peer_ip,
+        client_ip=client_ip,
+        effective_scheme=_effective_scheme(request),
+        via_trusted_proxy=_is_trusted_proxy_peer(peer_ip),
+        trusted_client_ip=_is_trusted_client_ip(client_ip),
+        trusted_client_allowlist_active=bool(_trusted_client_ips),
+        gateway_required_public=GATEWAY_REQUIRED_PUBLIC,
+        gateway_header_present=bool(request.headers.get(GATEWAY_HEADER_NAME)),
+        forwarded_for=request.headers.get("x-forwarded-for") or None,
+        forwarded_proto=request.headers.get("x-forwarded-proto") or None,
+        correlation_id=getattr(request.state, "correlation_id", None),
+    )
 
 @app.get("/workflows", response_model=List[Workflow])
 async def list_workflows(_principal=Depends(require_auth)):
@@ -1055,7 +1122,9 @@ def set_models_dir(req: ModelsDirRequest, principal=Depends(require_auth)):
 # --- Script Entrypoint ---
 if __name__ == "__main__":
     import uvicorn
-    host = os.environ.get("API_HOST", "127.0.0.1")
+    # Default to binding on all interfaces so the API can be reached over LAN/Tailscale
+    # when intentionally exposed (for example via a VPS reverse proxy).
+    host = os.environ.get("API_HOST", "0.0.0.0")
     port = int(os.environ.get("API_PORT", "9001"))
     reload = os.environ.get("UVICORN_RELOAD", "1") == "1"
     uvicorn.run("api_server:app", host=host, port=port, reload=reload)
