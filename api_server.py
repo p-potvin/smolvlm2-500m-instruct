@@ -2,7 +2,7 @@
 from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 import os
 import json
 from threading import Lock
@@ -18,6 +18,7 @@ import socket
 import string
 
 import asyncio
+from dataclasses import dataclass
 from dotenv import load_dotenv
 from db import init_db, close_db, UserAccount, ApiKey
 from tortoise import Tortoise
@@ -101,6 +102,117 @@ GATEWAY_REQUIRED_PUBLIC = os.environ.get("GATEWAY_REQUIRED_PUBLIC", "1") == "1"
 GATEWAY_SHARED_SECRET = os.environ.get("GATEWAY_SHARED_SECRET", "")
 GATEWAY_HEADER_NAME = os.environ.get("GATEWAY_HEADER_NAME", "x-vw-gateway-secret").lower()
 
+# ---------------------------------------------------------------------------
+# Job queue (in-process, durable state on disk)
+# ---------------------------------------------------------------------------
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+JOBS_DIR = os.environ.get("JOBS_DIR") or os.path.join(BASE_DIR, "data", "jobs")
+JOB_QUEUE_MAX_PENDING = int(os.environ.get("JOB_QUEUE_MAX_PENDING", "200"))
+JOB_WORKER_CONCURRENCY = max(1, int(os.environ.get("JOB_WORKER_CONCURRENCY", "1")))
+JOB_DEFAULT_TTL_SECONDS = int(os.environ.get("JOB_DEFAULT_TTL_SECONDS", "86400"))
+
+JOBS_PUBLIC_SUBMIT_ENABLED = os.environ.get("JOBS_PUBLIC_SUBMIT_ENABLED", "0") == "1"
+JOB_SUBMIT_RATE_LIMIT_MAX_PUBLIC = int(os.environ.get("JOB_SUBMIT_RATE_LIMIT_MAX_PUBLIC", "12"))
+JOB_SUBMIT_RATE_LIMIT_WINDOW_SECONDS = int(os.environ.get("JOB_SUBMIT_RATE_LIMIT_WINDOW_SECONDS", "60"))
+
+_jobs_fs_lock = Lock()
+
+def _ensure_jobs_dir() -> None:
+    try:
+        os.makedirs(JOBS_DIR, exist_ok=True)
+    except Exception:
+        # Don't hard-fail startup for filesystem issues; job endpoints will error.
+        pass
+
+def _job_path(job_id: str) -> str:
+    safe = "".join(ch for ch in job_id if ch.isalnum() or ch in ("-", "_"))
+    return os.path.join(JOBS_DIR, f"{safe}.json")
+
+def _read_job(job_id: str) -> Optional[dict]:
+    path = _job_path(job_id)
+    if not os.path.exists(path):
+        return None
+    with _jobs_fs_lock:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+def _write_job(job: dict) -> None:
+    path = _job_path(job["id"])
+    tmp_path = path + ".tmp"
+    with _jobs_fs_lock:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(job, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, path)
+
+def _list_jobs(limit: int = 50) -> List[dict]:
+    _ensure_jobs_dir()
+    try:
+        candidates = [
+            os.path.join(JOBS_DIR, name)
+            for name in os.listdir(JOBS_DIR)
+            if name.endswith(".json")
+        ]
+    except Exception:
+        return []
+    candidates.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+    jobs: List[dict] = []
+    for path in candidates[: max(0, limit)]:
+        try:
+            with _jobs_fs_lock:
+                with open(path, "r", encoding="utf-8") as f:
+                    jobs.append(json.load(f))
+        except Exception:
+            continue
+    return jobs
+
+def _job_now() -> float:
+    return time.time()
+
+def _new_job(kind: str, payload: dict, requested_by: dict) -> dict:
+    now = _job_now()
+    job_id = "job_" + uuid4().hex
+    return {
+        "id": job_id,
+        "kind": kind,
+        "status": "queued",
+        "created_at": now,
+        "updated_at": now,
+        "requested_by": requested_by,
+        "payload": payload,
+        "result": None,
+        "error": None,
+        "ttl_seconds": JOB_DEFAULT_TTL_SECONDS,
+    }
+
+def _job_redact_for_list(job: dict) -> dict:
+    # Never list full payloads by default; status pages can show details.
+    return {
+        "id": job.get("id"),
+        "kind": job.get("kind"),
+        "status": job.get("status"),
+        "created_at": job.get("created_at"),
+        "updated_at": job.get("updated_at"),
+        "requested_by": job.get("requested_by"),
+        "result": job.get("result"),
+        "error": job.get("error"),
+    }
+
+@dataclass
+class _JobQueueItem:
+    job_id: str
+
+_job_submit_buckets = defaultdict(lambda: deque())
+
+def _enforce_job_submit_rate_limit(client_ip: str) -> None:
+    now = _job_now()
+    bucket = _job_submit_buckets[client_ip]
+    while bucket and (now - bucket[0]) > JOB_SUBMIT_RATE_LIMIT_WINDOW_SECONDS:
+        bucket.popleft()
+    if len(bucket) >= JOB_SUBMIT_RATE_LIMIT_MAX_PUBLIC:
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    bucket.append(now)
+
 
 # --- Logging Setup ---
 logging.basicConfig(level=logging.INFO)
@@ -139,6 +251,8 @@ def _is_trusted_client_ip(ip: Optional[str]) -> bool:
     if _trusted_client_ips:
         return any(ip_obj == trusted_ip for trusted_ip in _trusted_client_ips)
     for net in _tailscale_networks:
+        if ip_obj.version != net.version:
+            continue
         if ip_obj in net:
             return True
     return False
@@ -150,7 +264,12 @@ def _is_trusted_proxy_peer(peer_ip: Optional[str]) -> bool:
         peer_obj = ipaddress.ip_address(peer_ip)
     except ValueError:
         return False
-    return any(peer_obj in net for net in _trusted_proxy_networks)
+    for net in _trusted_proxy_networks:
+        if peer_obj.version != net.version:
+            continue
+        if peer_obj in net:
+            return True
+    return False
 
 def _effective_scheme(request: Request) -> str:
     # Only trust proxy-provided scheme headers when the immediate peer is a trusted proxy.
@@ -189,10 +308,19 @@ def _get_client_ip(request: Request) -> Optional[str]:
     for ip_str in reversed(ips):
         try:
             ip_obj = ipaddress.ip_address(ip_str)
-            if not any(ip_obj in net for net in _trusted_proxy_networks):
-                return ip_str
         except ValueError:
             # If it's an invalid IP format, treat it as the untrusted client
+            return ip_str
+
+        is_from_trusted_proxy = False
+        for net in _trusted_proxy_networks:
+            if ip_obj.version != net.version:
+                continue
+            if ip_obj in net:
+                is_from_trusted_proxy = True
+                break
+
+        if not is_from_trusted_proxy:
             return ip_str
 
     # Fallback to leftmost if all are trusted
@@ -339,57 +467,68 @@ RATE_LIMIT_MAX_STATE_SIZE = 10000
 
 @app.middleware("http")
 async def gate_requests(request: Request, call_next):
-    if len(_rate_state) > RATE_LIMIT_MAX_STATE_SIZE:
-        # Prevent clearing the whole dictionary to avoid rate limit bypass
-        # Remove oldest element
-        oldest_key = next(iter(_rate_state))
-        _rate_state.pop(oldest_key, None)
+    try:
+        if len(_rate_state) > RATE_LIMIT_MAX_STATE_SIZE:
+            # Prevent clearing the whole dictionary to avoid rate limit bypass
+            # Remove oldest element
+            oldest_key = next(iter(_rate_state))
+            _rate_state.pop(oldest_key, None)
 
-    client_ip = _get_client_ip(request) or ""
-    is_trusted_ip = _is_trusted_client_ip(client_ip)
+        client_ip = _get_client_ip(request) or ""
+        is_trusted_ip = _is_trusted_client_ip(client_ip)
 
-    if MAINTENANCE_MODE and not is_trusted_ip:
-        raise HTTPException(status_code=503, detail="Temporarily unavailable")
+        if MAINTENANCE_MODE and not is_trusted_ip:
+            raise HTTPException(status_code=503, detail="Temporarily unavailable")
 
-    scheme = _effective_scheme(request)
-    if REQUIRE_HTTPS and scheme != "https" and not (ALLOW_HTTP_TRUSTED and is_trusted_ip):
-        raise HTTPException(status_code=426, detail="HTTPS required")
+        scheme = _effective_scheme(request)
+        if REQUIRE_HTTPS and scheme != "https" and not (ALLOW_HTTP_TRUSTED and is_trusted_ip):
+            raise HTTPException(status_code=426, detail="HTTPS required")
 
-    origin = request.headers.get("origin", "")
-    if not is_trusted_ip:
-        if GATEWAY_REQUIRED_PUBLIC:
-            if not GATEWAY_SHARED_SECRET:
-                raise HTTPException(status_code=500, detail="Gateway secret is not configured")
-            if not _gateway_secret_valid(request):
-                raise HTTPException(status_code=403, detail="Forbidden source")
-        else:
-            # No gateway required: fall back to browser origin allowlist.
-            if not origin or not _origin_allowed(origin):
-                raise HTTPException(status_code=403, detail="Forbidden source")
+        origin = request.headers.get("origin", "")
+        if not is_trusted_ip:
+            if GATEWAY_REQUIRED_PUBLIC:
+                if not GATEWAY_SHARED_SECRET:
+                    raise HTTPException(status_code=500, detail="Gateway secret is not configured")
+                if not _gateway_secret_valid(request):
+                    raise HTTPException(status_code=403, detail="Forbidden source")
+            else:
+                # No gateway required: fall back to browser origin allowlist.
+                if not origin or not _origin_allowed(origin):
+                    raise HTTPException(status_code=403, detail="Forbidden source")
 
-    if RATE_LIMIT_ENABLED:
-        now = time.time()
-        key = f"{client_ip}:{origin}" if origin else client_ip
-        bucket = _rate_state[key]
-        while bucket and (now - bucket[0]) > RATE_LIMIT_WINDOW_SECONDS:
-            bucket.popleft()
-        limit = RATE_LIMIT_MAX_TRUSTED if is_trusted_ip else RATE_LIMIT_MAX_PUBLIC
-        if len(bucket) >= limit:
-            raise HTTPException(status_code=429, detail="Rate limit exceeded")
-        bucket.append(now)
+        if RATE_LIMIT_ENABLED:
+            now = time.time()
+            key = f"{client_ip}:{origin}" if origin else client_ip
+            bucket = _rate_state[key]
+            while bucket and (now - bucket[0]) > RATE_LIMIT_WINDOW_SECONDS:
+                bucket.popleft()
+            limit = RATE_LIMIT_MAX_TRUSTED if is_trusted_ip else RATE_LIMIT_MAX_PUBLIC
+            if len(bucket) >= limit:
+                raise HTTPException(status_code=429, detail="Rate limit exceeded")
+            bucket.append(now)
 
-    correlation_id = "c" + "".join(secrets.choice(string.ascii_lowercase + string.digits) for _ in range(6))
-    request.state.correlation_id = correlation_id
+        correlation_id = "c" + "".join(secrets.choice(string.ascii_lowercase + string.digits) for _ in range(6))
+        request.state.correlation_id = correlation_id
 
-    response = await call_next(request)
+        response = await call_next(request)
 
-    response.headers["Content-Security-Policy"] = "default-src 'self'"
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
-    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-    response.headers["X-Correlation-Id"] = correlation_id
+        response.headers["Content-Security-Policy"] = "default-src 'self'"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        response.headers["X-Correlation-Id"] = correlation_id
 
-    return response
+        return response
+    except HTTPException as exc:
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    except Exception:
+        peer_ip = request.client.host if request.client else None
+        try:
+            client_ip = _get_client_ip(request)
+        except Exception:
+            client_ip = None
+        logger.exception("gate_requests crashed", extra={"peer_ip": peer_ip, "client_ip": client_ip})
+        return JSONResponse(status_code=500, content={"detail": "Internal Server Error"})
 
 # --- Models ---
 class Workflow(BaseModel):
@@ -445,6 +584,25 @@ class WorkflowFavoriteRequest(BaseModel):
 class WorkflowRunRequest(BaseModel):
     id: str
     mode: str  # 'local' or 'nim'
+
+class JobSubmitRequest(BaseModel):
+    kind: str = Field(default="workflow_run")
+    id: str
+    mode: str = Field(default="local")
+
+class JobSummary(BaseModel):
+    id: str
+    kind: str
+    status: str
+    created_at: float
+    updated_at: float
+    requested_by: Optional[dict] = None
+    result: Optional[dict] = None
+    error: Optional[str] = None
+
+class JobDetail(JobSummary):
+    payload: Optional[dict] = None
+    ttl_seconds: Optional[int] = None
 
 class ConfigUpdateRequest(BaseModel):
     modelsDir: Optional[str] = None
@@ -718,6 +876,67 @@ def workflowdb_to_pydantic(wf: WorkflowDB) -> Workflow:
 # --- Tortoise ORM Initialization State ---
 _tortoise_initialized = False
 
+async def _job_worker(app: FastAPI, worker_id: int) -> None:
+    queue: asyncio.Queue = app.state.job_queue
+    while True:
+        item: _JobQueueItem = await queue.get()
+        try:
+            job = _read_job(item.job_id)
+            if not job:
+                continue
+            if job.get("status") != "queued":
+                continue
+
+            job["status"] = "running"
+            job["updated_at"] = _job_now()
+            _write_job(job)
+
+            result: Optional[dict] = None
+            error: Optional[str] = None
+
+            try:
+                if job.get("kind") == "workflow_run":
+                    payload = job.get("payload") or {}
+                    workflow_id = str(payload.get("id") or "")
+                    mode = str(payload.get("mode") or "local")
+                    # Placeholder execution: this is where we will later call the real runner.
+                    result = {"id": workflow_id, "mode": mode, "status": "started"}
+                else:
+                    raise ValueError(f"Unknown job kind: {job.get('kind')}")
+            except Exception as e:
+                error = f"{type(e).__name__}: {e}"
+
+            job = _read_job(item.job_id) or job
+            if job.get("status") == "canceled":
+                job["updated_at"] = _job_now()
+                _write_job(job)
+                continue
+
+            job["status"] = "failed" if error else "succeeded"
+            job["updated_at"] = _job_now()
+            job["result"] = result
+            job["error"] = error
+            _write_job(job)
+        finally:
+            queue.task_done()
+
+def _job_requested_by(principal: dict) -> dict:
+    if principal.get("kind") == "user":
+        user = principal.get("user")
+        return {"kind": "user", "username": getattr(user, "username", None)}
+    if principal.get("kind") == "api_key":
+        key = principal.get("api_key")
+        return {"kind": "api_key", "name": getattr(key, "name", None)}
+    return {"kind": "unknown"}
+
+def _job_submit_allowed(request: Request, principal: dict) -> bool:
+    client_ip = _get_client_ip(request) or ""
+    if _is_trusted_client_ip(client_ip):
+        return True
+    if principal.get("kind") == "user":
+        return True
+    return JOBS_PUBLIC_SUBMIT_ENABLED
+
 @app.on_event("startup")
 async def startup_event():
     global _tortoise_initialized
@@ -741,9 +960,33 @@ async def startup_event():
         logger.error(f"Failed to initialize Tortoise ORM: {e}")
         _tortoise_initialized = False
 
+    _ensure_jobs_dir()
+    if not hasattr(app.state, "job_queue"):
+        app.state.job_queue = asyncio.Queue(maxsize=JOB_QUEUE_MAX_PENDING)
+        app.state.job_workers = [
+            asyncio.create_task(_job_worker(app, index + 1))
+            for index in range(JOB_WORKER_CONCURRENCY)
+        ]
+
+        # Re-queue any durable queued jobs from a previous run (best-effort).
+        try:
+            durable = _list_jobs(limit=JOB_QUEUE_MAX_PENDING)
+            queued = [j for j in durable if j.get("status") == "queued"]
+            queued.sort(key=lambda j: float(j.get("created_at") or 0))
+            for job in queued:
+                try:
+                    app.state.job_queue.put_nowait(_JobQueueItem(job_id=str(job.get("id"))))
+                except asyncio.QueueFull:
+                    break
+        except Exception:
+            pass
+
 @app.on_event("shutdown")
 async def shutdown_event():
     try:
+        if hasattr(app.state, "job_workers"):
+            for task in list(app.state.job_workers):
+                task.cancel()
         await close_db()
         logger.info("Tortoise ORM connections closed.")
     except Exception as e:
@@ -754,6 +997,14 @@ async def shutdown_event():
 
 def db_available() -> bool:
     return bool(_tortoise_initialized and Tortoise._inited)
+
+def _queue_job(app: FastAPI, job: dict) -> None:
+    if not hasattr(app.state, "job_queue"):
+        raise HTTPException(status_code=503, detail="Job queue unavailable")
+    try:
+        app.state.job_queue.put_nowait(_JobQueueItem(job_id=job["id"]))
+    except asyncio.QueueFull:
+        raise HTTPException(status_code=503, detail="Server busy; try again later")
 
 @app.post("/security/pqc/handshake", response_model=PqcHandshakeResponse)
 async def pqc_handshake(payload: PqcHandshakeRequest):
@@ -1046,7 +1297,7 @@ async def favorite_workflow(req: WorkflowFavoriteRequest, _principal=Depends(req
 
 
 @app.post("/workflows/run")
-async def run_workflow(req: WorkflowRunRequest, _principal=Depends(require_auth)):
+async def run_workflow(req: WorkflowRunRequest, request: Request, principal=Depends(require_auth)):
     if db_available():
         try:
             await WorkflowDB.get(id=req.id)
@@ -1056,10 +1307,55 @@ async def run_workflow(req: WorkflowRunRequest, _principal=Depends(require_auth)
         workflows = _load_workflows_from_file()
         if not any(item.id == req.id for item in workflows):
             raise HTTPException(status_code=404, detail="Workflow not found")
-    # NIM VM integration placeholder
-    if req.mode == "nim":
-        return {"id": req.id, "mode": req.mode, "status": "nim_vm_placeholder", "message": "NIM VM integration not yet implemented."}
-    return {"id": req.id, "mode": req.mode, "status": "started"}
+
+    if not _job_submit_allowed(request, principal):
+        raise HTTPException(status_code=403, detail="Job submission not allowed")
+
+    client_ip = _get_client_ip(request) or ""
+    if not _is_trusted_client_ip(client_ip):
+        _enforce_job_submit_rate_limit(client_ip)
+
+    job = _new_job(
+        kind="workflow_run",
+        payload={"id": req.id, "mode": req.mode},
+        requested_by=_job_requested_by(principal),
+    )
+    _write_job(job)
+    _queue_job(app, job)
+
+    # Compatibility response shape: keep existing keys + add jobId.
+    return {"id": req.id, "mode": req.mode, "status": "queued", "jobId": job["id"]}
+
+@app.get("/jobs", response_model=List[JobSummary])
+async def list_jobs(limit: int = 50, principal=Depends(require_auth)):
+    if principal.get("kind") not in ("user", "api_key"):
+        raise HTTPException(status_code=401, detail="Auth required")
+    items = _list_jobs(limit=min(200, max(1, int(limit))))
+    return [JobSummary(**_job_redact_for_list(item)) for item in items]
+
+@app.get("/jobs/{job_id}", response_model=JobDetail)
+async def get_job(job_id: str, principal=Depends(require_auth)):
+    if principal.get("kind") not in ("user", "api_key"):
+        raise HTTPException(status_code=401, detail="Auth required")
+    job = _read_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    payload = dict(job)
+    return JobDetail(**payload)
+
+@app.post("/jobs/{job_id}/cancel", response_model=JobDetail)
+async def cancel_job(job_id: str, principal=Depends(require_auth)):
+    if principal.get("kind") not in ("user", "api_key"):
+        raise HTTPException(status_code=401, detail="Auth required")
+    job = _read_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.get("status") in ("succeeded", "failed"):
+        return JobDetail(**job)
+    job["status"] = "canceled"
+    job["updated_at"] = _job_now()
+    _write_job(job)
+    return JobDetail(**job)
 
 # --- Persistent Storage Placeholders ---
 @app.post("/storage/google-drive/upload")
