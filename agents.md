@@ -10,15 +10,14 @@ Before UI, branding, or token work, read:
 - `vault-themes/AGENTS.md`
 - `vault-themes/CONTEXT.md`
 <!-- VAULT-THEMES-SUBMODULE:END -->
- 
+
 ## VaultWares Repo Instructions
 
 ### Editing rule
 
-You may modify files locally in this repository whenever the task calls for it.
-What is restricted on `main` is creating Git commits or pushing changes unless the user explicitly asks for that in the current turn.
+When working in the `vaultwares` repository, you can edit files as needed for your task. However, do not make any Git commits or push changes on the `main` branch unless you explicitly asked for that in the current turn.
 
-### Standalone repo rule
+### Standalone Repository Rule
 
 When a task involves `vault-themes`, `vaultwares-agentciation`, or `vaultwares_agentciation`, make the real change in the standalone repository itself.
 If you encounter a nested copy or submodule mirror here, use it as context only and do not treat it as the authoritative source for the change.
