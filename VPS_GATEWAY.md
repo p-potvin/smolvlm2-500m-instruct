@@ -11,6 +11,17 @@ publicly reachable from the internet.
   -> Tailscale (private network)
   -> Local PC (FastAPI on port 9001 + Postgres)
 
+## Noddit (Vault Flows) same-origin proxy
+
+For `noddit.org`, prefer a split reverse-proxy so the browser only ever talks to `https://noddit.org`:
+
+- `/` → Vault Flows SPA on the PC (tailnet `:3100`)
+- `/api/` → Pipelines API on the PC (tailnet `:9001`)
+
+This avoids mixed-content warnings and avoids exposing tailnet IPs to the browser.
+
+Example config: `noddit_vps_nginx.conf.example`.
+
 ## Why this matches the "hidden API" goal
 
 - The only internet-exposed service is the VPS (you can add strict limits there quickly).
