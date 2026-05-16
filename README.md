@@ -3,7 +3,7 @@
 # vaultwares-pipelines
 
 **Core AI/Media Orchestration Engine**  
-**Part of the VaultWares Ecosystem** • <a href="https://docs.vaultwares.com">docs.vaultwares.com</a> • <a href="https://vaultwares.com">vaultwares.com</a>
+**Part of the VaultWares Ecosystem** • <a href="https://docs.vaultwares.ca">docs.vaultwares.ca</a> • <a href="https://vaultwares.ca">vaultwares.ca</a>
 
 **Orchestrates multimodal AI pipelines (video, image, audio, LoRAs, digital twins, I2V/T2V, real-time filters) with local-first privacy guarantees.**
 
@@ -45,7 +45,7 @@ Fully synchronized with the VaultWares Agent Knowledge Dissemination System.
 - Local-first execution by default
 - Encrypted intermediate artifacts
 - No telemetry
-- Full threat model in central [VaultWares docs](https://docs.vaultwares.com)
+- Full threat model in central [VaultWares docs](https://docs.vaultwares.ca)
 
 ## Contributing
 See [CONTRIBUTING.md](CONTRIBUTING.md) and the central [Brand Guidelines](https://raw.githubusercontent.com/p-potvin/vaultwares-docs/main/agents/branding.mdx).
