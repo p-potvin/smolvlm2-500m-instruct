@@ -167,8 +167,8 @@ def _get_client_ip(request: Request) -> Optional[str]:
             # If it's an invalid IP format, treat it as the untrusted client
             return ip_str
 
-    # Fallback to leftmost if all are trusted
-    return ips[0] if ips else peer_ip
+    # Fallback to rightmost (the one immediately connected to the proxy) if all are trusted
+    return ips[-1] if ips else peer_ip
 
 def _origin_allowed(origin: str) -> bool:
     if not origin:
