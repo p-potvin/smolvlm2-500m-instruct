@@ -192,14 +192,20 @@ def _hash_api_key(raw_key: str) -> str:
         return ""
     if not API_KEY_PEPPER:
         raise HTTPException(status_code=500, detail="API key pepper is not configured")
-    return pwd_context.hash(API_KEY_PEPPER + raw_key)
+    hasher = hashlib.sha256()
+    hasher.update((API_KEY_PEPPER + raw_key).encode("utf-8"))
+    return hasher.hexdigest()
 
 def _verify_api_key(raw_key: str, hashed_key: str) -> bool:
     if not raw_key or not hashed_key:
         return False
     if not API_KEY_PEPPER:
         raise HTTPException(status_code=500, detail="API key pepper is not configured")
-    return pwd_context.verify(API_KEY_PEPPER + raw_key, hashed_key)
+    if hashed_key.startswith("$2"):
+        # Legacy bcrypt hash
+        return pwd_context.verify(API_KEY_PEPPER + raw_key, hashed_key)
+    expected = _hash_api_key(raw_key)
+    return secrets.compare_digest(expected, hashed_key)
 
 def _create_access_token(user_id: int, username: str, is_admin: bool) -> str:
     if not JWT_SECRET:
@@ -276,8 +282,24 @@ async def require_auth(
 
     api_key = request.headers.get("x-api-key", "")
     if api_key and is_trusted_ip:
-        key_hash = _hash_api_key(api_key)
-        key_row = await ApiKey.get_or_none(key_hash=key_hash)
+        key_row = None
+        if api_key.startswith("vwk_"):
+            parts = api_key.split("_")
+            if len(parts) >= 3:
+                try:
+                    key_id = int(parts[1])
+                    key_row = await ApiKey.get_or_none(id=key_id)
+                except ValueError:
+                    pass
+
+        if key_row:
+            if not _verify_api_key(api_key, key_row.key_hash):
+                key_row = None
+
+        if not key_row:
+            key_hash = _hash_api_key(api_key)
+            key_row = await ApiKey.get_or_none(key_hash=key_hash)
+
         if not key_row or key_row.is_revoked:
             detail_msg = _get_localized_unauthorized_msg(request)
             raise HTTPException(status_code=403, detail=detail_msg)
