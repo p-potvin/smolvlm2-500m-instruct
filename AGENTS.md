@@ -1,15 +1,28 @@
-<!-- VAULT-THEMES-SUBMODULE:START -->
-## Vault Themes Submodule Rules
+# vaultwares-pipelines
 
-If this repository includes the `vault-themes` submodule, you MUST read the following files before making changes related to UI, branding, design systems, token usage, shared components, authentication UX, encrypted client-to-client communication, or Figma-derived implementation:
+> For company-wide rules, read `vaultwares-docs/AGENTS.md` first.
+
+<!-- VAULT-THEMES-SUBMODULE:START -->
+## vault-themes Submodule
+
+Before UI, branding, or token work, read:
 
 - `vault-themes/AGENTS.md`
-- `vault-themes/.github/STYLE.md`
-- `vault-themes/.github/INSTRUCTIONS.md`
-
-When theme token roles, contrast helpers, or executable theme governance matter, also inspect:
-
-- `vault-themes/theme_manager.py`
-
-Treat these files as the shared VaultWares source of truth. Re-check them whenever the submodule changes or when a task touches cross-repo product rules.
+- `vault-themes/CONTEXT.md`
 <!-- VAULT-THEMES-SUBMODULE:END -->
+
+## VaultWares Repo Instructions
+
+### Editing rule
+
+When working in the `vaultwares` repository, you can edit files as needed for your task. However, do not make any Git commits or push changes on the `main` branch unless you explicitly asked for that in the current turn.
+
+### Standalone Repository Rule
+
+When a task involves `vault-themes`, `vaultwares-agentciation`, or `vaultwares_agentciation`, make the real change in the standalone repository itself.
+If you encounter a nested copy or submodule mirror here, use it as context only and do not treat it as the authoritative source for the change.
+
+### Practical intent
+
+The goal of the rule is to prevent accidental edits in the wrong checkout, not to discourage local file changes.
+Edit the right file in the right repo, verify it, and stop before committing on `main` unless explicitly requested.
