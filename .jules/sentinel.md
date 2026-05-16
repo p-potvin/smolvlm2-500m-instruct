@@ -49,3 +49,8 @@
 **Vulnerability:** Subprocesses generating Git commits used string formatting to construct commit messages and passed them to `git commit -m` in `vaultwares_agentciation/omx_integration/omx_worker.py` and `vaultwares_agentciation/omx_integration/demo/run_demo.py`.
 **Learning:** While `shell=False` protects against basic command injection (e.g. `&& rm -rf /`), parameter injection or argument confusion is still possible if untrusted input slips in.
 **Prevention:** Use standard input streams for passing untrusted strings as data rather than command arguments. In the context of `git commit`, this means using `-F -` and passing the message via `subprocess.run(..., input=commit_msg)`.
+
+## $(date +%Y-%m-%d) - Hardcoded Database Credentials
+**Vulnerability:** A fallback database connection URL in `api_server.py` included hardcoded default PostgreSQL credentials (`postgres:postgres`).
+**Learning:** Even fallback or local development URLs pose a risk if they leak expected credential structures or accidentally get exposed/deployed to environments where they might be active. Furthermore, when fixing these issues by substituting a safer default (like `localhost`), the original database engine format must be preserved (e.g., `postgres://` rather than `sqlite://`) to avoid breaking ORM models that depend on engine-specific types (like `JSONField`).
+**Prevention:** Remove hardcoded credentials from configuration defaults, requiring the user to explicitly define them via environment variables, or use safe, credential-less localhost defaults while strictly preserving the expected database engine type to maintain application compatibility.

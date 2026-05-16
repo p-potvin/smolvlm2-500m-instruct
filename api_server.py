@@ -687,7 +687,7 @@ def root():
 # --- DB Setup ---
 from tortoise import fields, models
 from tortoise.exceptions import DoesNotExist
-DB_URL = os.getenv("DB_URL", "postgres://postgres:postgres@localhost:5432/vaultwares")
+DB_URL = os.getenv("DB_URL", "postgres://localhost:5432/vaultwares")
 
 class WorkflowDB(models.Model):
     id = fields.CharField(pk=True, max_length=64)
