@@ -43,3 +43,8 @@
 **Vulnerability:** The `/auth/login` endpoint returned immediately with a 401 error if a username was not found in the database, allowing an attacker to determine if a user exists based on the response time (timing attack).
 **Learning:** During authentication flows, cryptographic operations (like password hashing) take a significant and measurable amount of time. If these are skipped when a user doesn't exist, the discrepancy leaks information about valid usernames.
 **Prevention:** Always use a dummy verification method (e.g., `pwd_context.dummy_verify()`) when a user is not found to simulate the time taken by a real password verification, ensuring consistent response times regardless of whether the user exists or not.
+
+## $(date +%Y-%m-%d) - Exception Information Leakage Prevention
+**Vulnerability:** Subprocesses generating errors (like `ffmpeg`) raised a `RuntimeError` that directly included the command's full `stderr` output.
+**Learning:** Returning raw command errors or stack traces to callers (especially web API endpoints) can leak sensitive internal paths, library versions, or environment details to an attacker, facilitating further exploitation.
+**Prevention:** To prevent information leakage, log the full error output internally (e.g., using Python's `logging` module) and return a generic, sanitized error message to the caller.
