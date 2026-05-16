@@ -44,6 +44,10 @@
 **Learning:** During authentication flows, cryptographic operations (like password hashing) take a significant and measurable amount of time. If these are skipped when a user doesn't exist, the discrepancy leaks information about valid usernames.
 **Prevention:** Always use a dummy verification method (e.g., `pwd_context.dummy_verify()`) when a user is not found to simulate the time taken by a real password verification, ensuring consistent response times regardless of whether the user exists or not.
 
+## $(date +%Y-%m-%d) - Exception Information Leakage Prevention
+**Vulnerability:** Subprocesses generating errors (like `ffmpeg`) raised a `RuntimeError` that directly included the command's full `stderr` output.
+**Learning:** Returning raw command errors or stack traces to callers (especially web API endpoints) can leak sensitive internal paths, library versions, or environment details to an attacker, facilitating further exploitation.
+**Prevention:** To prevent information leakage, log the full error output internally (e.g., using Python's `logging` module) and return a generic, sanitized error message to the caller.
 ## 2026-05-06 - Admin Authorization Bypass in Global Config Endpoints
 **Vulnerability:** The `/config` and `/config/models-dir` POST endpoints allowed any authenticated non-user principal (like API keys) to change global system configurations, including `modelsDir` and `localBridgeUrl`, potentially leading to Path Traversal or Server-Side Request Forgery (SSRF). The flawed logic was `if principal.get("kind") == "user" and not principal["user"].is_admin:`, which returned False and bypassed the check when `kind` was not "user".
 **Learning:** Endpoints that modify global or system-level state must enforce authorization checks securely. Checking `kind == "user"` with an `and` statement incorrectly allowed bypassing for other principal kinds.
