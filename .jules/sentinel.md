@@ -43,3 +43,9 @@
 **Vulnerability:** The `/auth/login` endpoint returned immediately with a 401 error if a username was not found in the database, allowing an attacker to determine if a user exists based on the response time (timing attack).
 **Learning:** During authentication flows, cryptographic operations (like password hashing) take a significant and measurable amount of time. If these are skipped when a user doesn't exist, the discrepancy leaks information about valid usernames.
 **Prevention:** Always use a dummy verification method (e.g., `pwd_context.dummy_verify()`) when a user is not found to simulate the time taken by a real password verification, ensuring consistent response times regardless of whether the user exists or not.
+
+## $(date +%Y-%m-%d) - Subprocess Command Injection in Git Commits
+
+**Vulnerability:** Subprocesses generating Git commits used string formatting to construct commit messages and passed them to `git commit -m` in `vaultwares_agentciation/omx_integration/omx_worker.py` and `vaultwares_agentciation/omx_integration/demo/run_demo.py`.
+**Learning:** While `shell=False` protects against basic command injection (e.g. `&& rm -rf /`), parameter injection or argument confusion is still possible if untrusted input slips in.
+**Prevention:** Use standard input streams for passing untrusted strings as data rather than command arguments. In the context of `git commit`, this means using `-F -` and passing the message via `subprocess.run(..., input=commit_msg)`.
