@@ -1,0 +1,3 @@
+[flake8]
+exclude = .venv, .git, __pycache__, build, dist, vaultwares_agentciation, vault-themes
+max-line-length = 120
