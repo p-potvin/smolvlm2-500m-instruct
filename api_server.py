@@ -348,6 +348,7 @@ def _hash_api_key(raw_key: str) -> str:
         return ""
     if not API_KEY_PEPPER:
         raise HTTPException(status_code=500, detail="API key pepper is not configured")
+    import hashlib
     return hashlib.sha256((API_KEY_PEPPER + raw_key).encode("utf-8")).hexdigest()
 
 def _verify_api_key(raw_key: str, hashed_key: str) -> bool:
@@ -436,28 +437,24 @@ async def require_auth(
     api_key = request.headers.get("x-api-key", "")
     if api_key and is_trusted_ip:
         key_row = None
-
-        # 1. Try O(1) lookup by ID for new keys (format: vwk_{id}_{secret})
-        parts = api_key.split('_')
-        if len(parts) >= 3 and parts[0] == "vwk":
+        parts = api_key.split("_")
+        if len(parts) == 3 and parts[0] == "vwk":
             try:
-                key_id = int(parts[1])
-                key_row = await ApiKey.get_or_none(id=key_id)
+                candidate = await ApiKey.get_or_none(id=int(parts[1]))
+                if candidate:
+                    import hmac
+                    expected_hash = _hash_api_key(api_key)
+                    if hmac.compare_digest(candidate.key_hash, expected_hash):
+                        key_row = candidate
+                    elif _verify_api_key(api_key, candidate.key_hash):
+                        key_row = candidate
             except ValueError:
                 pass
 
-        # 2. Try O(1) lookup by hash if ID lookup failed (e.g., legacy keys without the vwk_ prefix)
-        # Note: This will not find legacy bcrypt keys without an ID, but an O(N) loop is intentionally
-        # omitted to prevent CPU exhaustion DoS vulnerabilities.
-        if not key_row:
-            key_hash = _hash_api_key(api_key)
-            key_row = await ApiKey.get_or_none(key_hash=key_hash)
-
-        if key_row and not key_row.is_revoked and _verify_api_key(api_key, key_row.key_hash):
-            return {"kind": "api_key", "api_key": key_row}
-
-        detail_msg = _get_localized_unauthorized_msg(request)
-        raise HTTPException(status_code=403, detail=detail_msg)
+        if not key_row or key_row.is_revoked:
+            detail_msg = _get_localized_unauthorized_msg(request)
+            raise HTTPException(status_code=403, detail=detail_msg)
+        return {"kind": "api_key", "api_key": key_row}
 
     detail_msg = _get_localized_unauthorized_msg(request)
     raise HTTPException(status_code=403, detail=detail_msg)
