@@ -192,7 +192,8 @@ def _hash_api_key(raw_key: str) -> str:
         return ""
     if not API_KEY_PEPPER:
         raise HTTPException(status_code=500, detail="API key pepper is not configured")
-    return pwd_context.hash(API_KEY_PEPPER + raw_key)
+    import hashlib
+    return hashlib.sha256((API_KEY_PEPPER + raw_key).encode("utf-8")).hexdigest()
 
 def _verify_api_key(raw_key: str, hashed_key: str) -> bool:
     if not raw_key or not hashed_key:
@@ -276,8 +277,21 @@ async def require_auth(
 
     api_key = request.headers.get("x-api-key", "")
     if api_key and is_trusted_ip:
-        key_hash = _hash_api_key(api_key)
-        key_row = await ApiKey.get_or_none(key_hash=key_hash)
+        key_row = None
+        parts = api_key.split("_")
+        if len(parts) == 3 and parts[0] == "vwk":
+            try:
+                candidate = await ApiKey.get_or_none(id=int(parts[1]))
+                if candidate:
+                    import hmac
+                    expected_hash = _hash_api_key(api_key)
+                    if hmac.compare_digest(candidate.key_hash, expected_hash):
+                        key_row = candidate
+                    elif _verify_api_key(api_key, candidate.key_hash):
+                        key_row = candidate
+            except ValueError:
+                pass
+
         if not key_row or key_row.is_revoked:
             detail_msg = _get_localized_unauthorized_msg(request)
             raise HTTPException(status_code=403, detail=detail_msg)
