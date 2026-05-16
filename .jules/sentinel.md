@@ -49,3 +49,8 @@
 **Vulnerability:** Subprocesses generating Git commits used string formatting to construct commit messages and passed them to `git commit -m` in `vaultwares_agentciation/omx_integration/omx_worker.py` and `vaultwares_agentciation/omx_integration/demo/run_demo.py`.
 **Learning:** While `shell=False` protects against basic command injection (e.g. `&& rm -rf /`), parameter injection or argument confusion is still possible if untrusted input slips in.
 **Prevention:** Use standard input streams for passing untrusted strings as data rather than command arguments. In the context of `git commit`, this means using `-F -` and passing the message via `subprocess.run(..., input=commit_msg)`.
+
+## $(date +%Y-%m-%d) - Admin Authorization Bypass in Global Config Endpoints
+**Vulnerability:** The `/config` and `/config/models-dir` POST endpoints allowed any authenticated user (e.g. an API Key) to change global system configurations, including `modelsDir` and `localBridgeUrl`, potentially leading to Path Traversal or Server-Side Request Forgery (SSRF). This was due to logic checking `principal.get("kind") == "user" and not principal["user"].is_admin`, which allowed API keys (where `kind == "api_key"`) to bypass the `is_admin` check.
+**Learning:** Endpoints that modify global or system-level state must enforce authorization checks (e.g., verifying `user.is_admin`) in addition to general authentication checks, to prevent privilege escalation. Do not assume that the `kind` is `user`.
+**Prevention:** Always verify that the authenticated principal has the appropriate role (`is_admin`) and is of the expected type before allowing them to mutate global state or sensitive system settings. Use `principal.get("kind") != "user" or not principal["user"].is_admin`.

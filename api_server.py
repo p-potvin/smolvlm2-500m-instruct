@@ -1022,7 +1022,7 @@ def get_config(_principal=Depends(require_auth)):
 
 @app.post("/config")
 def update_config(req: ConfigUpdateRequest, principal=Depends(require_auth)):
-    if principal.get("kind") == "user" and not principal["user"].is_admin:
+    if principal.get("kind") != "user" or not principal["user"].is_admin:
         raise HTTPException(status_code=403, detail="Admin required")
     payload = req.model_dump(exclude_none=True)
     APP_CONFIG.update(payload)
@@ -1039,7 +1039,7 @@ def get_models_dir(_principal=Depends(require_auth)):
 
 @app.post("/config/models-dir")
 def set_models_dir(req: ModelsDirRequest, principal=Depends(require_auth)):
-    if principal.get("kind") == "user" and not principal["user"].is_admin:
+    if principal.get("kind") != "user" or not principal["user"].is_admin:
         raise HTTPException(status_code=403, detail="Admin required")
     global DEFAULT_MODELS_DIR
     resolved = req.dir_path or req.models_dir or req.modelsDir
